@@ -25,6 +25,32 @@ CODE_DESC = {
     'CODE':'Age / Gender Rule','DUPL':'Duplicate','NO_CODE':'No Code'
 }
 
+THRESHOLDS = {
+    'rejection_rate_critical': 17,
+    'rejection_rate_warning': 14,
+    'combo_high_risk_rate': 70,
+    'combo_gray_min_rate': 30,
+    'combo_min_claims': 20,
+    'provider_flag_rate': 30,
+    'provider_flag_min_claims': 50,
+    'provider_investigation_min_claims': 20,
+    'new_drug_ncov_min_claims': 5,
+    'emerging_baseline_months': 6,
+    'emerging_min_current_claims': 10,
+    'emerging_min_baseline_months': 2,
+    'emerging_zscore_warning': 2.0,
+    'emerging_zscore_critical': 3.0,
+    'emerging_pct_change_warning': 50,
+    'emerging_pct_change_critical': 100,
+    'emerging_new_combo_min_claims': 5,
+    'emerging_financial_min_delta': 10000,
+    'dynamic_fraud_min_claims': 3,
+    'dynamic_fraud_baseline_min_claims': 20,
+    'dynamic_fraud_dominance_pct': 95,
+}
+
+SAMPLE_DATA_FILE = 'Pharmacy_QLM_February.csv'
+
 # ── MNEC KEYWORD PATTERNS ──────────────────────────────────────
 CODE_KEYWORDS_MNEC = {
     'Clinical Mismatch': ['clinically indicated','non indicated','not related','medically indicated','not clinically'],
@@ -150,14 +176,80 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 [data-testid="stDataFrame"] { border-radius: 10px; overflow: hidden; }
 .stDataFrame { background: #161B22; }
 
-/* Upload area */
+
+
+
+/* Upload box */
 [data-testid="stFileUploader"] {
-    background: #161B22;
-    border: 2px dashed #21262D;
-    border-radius: 12px;
-    padding: 20px;
+    background-color: #161B22 !important;
+    border: 2px dashed #388BFD !important;
+    border-radius: 12px !important;
+    padding: 20px !important;
 }
-[data-testid="stFileUploader"]:hover { border-color: #388BFD; }
+
+/* Inner drop area */
+[data-testid="stFileUploader"] section {
+    background-color: #161B22 !important;
+}
+
+/* Upload text */
+[data-testid="stFileUploader"] label,
+[data-testid="stFileUploader"] p,
+[data-testid="stFileUploader"] span,
+[data-testid="stFileUploader"] div { color: #E6EDF3 !important; font-weight: 500 !important;}
+
+/* Browse files button */
+[data-testid="stFileUploader"] button {
+    background-color: #21262D !important;
+    color: #E6EDF3 !important;
+    border: 1px solid #388BFD !important;
+}
+   
+
+
+
+/* Selectbox and all input labels - aggressive targeting */
+[data-testid="stSelectbox"] label,
+[data-testid="stSelectbox"] *,
+[data-testid="stNumberInput"] label,
+[data-testid="stNumberInput"] *,
+[data-testid="stTextInput"] label,
+[data-testid="stTextInput"] * {
+    color: #E6EDF3 !important;
+    font-weight: 500 !important;
+}
+
+/* Selectbox styling */
+[data-testid="stSelectbox"],
+[data-testid="stNumberInput"],
+[data-testid="stTextInput"] {
+    color: #E6EDF3 !important;
+}
+
+/* Force all div and span text in sidebar to be light */
+[data-testid="stSidebar"] div,
+[data-testid="stSidebar"] span,
+[data-testid="stSidebar"] label {
+    color: #E6EDF3 !important;
+}
+
+
+
+/* Provider selectbox typing text */
+[data-baseweb="select"] input {
+    color: black !important;
+    -webkit-text-fill-color: black !important;
+}
+
+/* Dropdown options */
+[data-baseweb="select"] * {
+    color: black !important;
+}
+
+
+
+
+
 
 /* Plotly charts transparent bg */
 .js-plotly-plot { border-radius: 12px; }

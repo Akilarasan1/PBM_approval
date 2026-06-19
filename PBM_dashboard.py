@@ -2,19 +2,29 @@
 
 import streamlit as st
 import pandas as pd
+import io
+from pathlib import Path
 from insight import gen_insights
 
-# Import modular functions
-from utils import STREAMLIT_CSS
-from data import process, compute_code_stats, compute_drug_diag_combos, compute_provider_stats, validate_columns
+from utils import STREAMLIT_CSS, THRESHOLDS, SAMPLE_DATA_FILE
+from data import (
+    process, compute_code_stats, compute_drug_diag_combos, compute_provider_stats,
+    compute_weekly_trends, compute_new_drugs_always_ncov, compute_provider_investigation,
+    compute_provider_detail, enrich_combo_display, validate_columns,
+)
 from viz import (
     plot_rejection_codes_volume_financial, plot_mnec_breakdown,
-    plot_gender_rejection_rate, plot_age_rejection_rate,
-    plot_rejected_amount_by_code, plot_amount_distribution_treemap,
+    plot_age_rejection_rate, plot_rejected_amount_by_code,
     plot_top_rejected_drugs, plot_high_risk_combos,
     plot_provider_volume_and_rejection, plot_provider_risk_map,
-    plot_age_violations
+    plot_age_violations, plot_weekly_trends,
+    plot_anomaly_scatter, plot_findings_by_dimension,
 )
+import history
+import anomaly
+
+APP_DIR = Path(__file__).parent
+SAMPLE_PATH = APP_DIR / SAMPLE_DATA_FILE
 
 # ── PAGE CONFIG ────────────────────────────────────────────────
 st.set_page_config(
@@ -26,6 +36,9 @@ st.set_page_config(
 
 # ── APPLY DESIGN TOKENS ────────────────────────────────────────
 st.markdown(STREAMLIT_CSS, unsafe_allow_html=True)
+
+file_bytes = None
+filename = None
 
 # ── SIDEBAR ────────────────────────────────────────────────────
 with st.sidebar:
@@ -40,21 +53,76 @@ with st.sidebar:
     uploaded = st.file_uploader(
         "Upload monthly CSV or Excel",
         type=['csv', 'xlsx'],
-        help="Upload your monthly PBM claims file"
+        help="Upload your monthly PBM claims file",
     )
+
+
+    if uploaded is not None:
+        st.session_state['use_sample_data'] = False
+        file_bytes = uploaded.read()
+        filename = uploaded.name
+    # elif st.session_state.get('use_sample_data') and SAMPLE_PATH.exists():
+    #     file_bytes = SAMPLE_PATH.read_bytes()
+    #     filename = SAMPLE_PATH.name
+
     st.markdown("---")
     st.markdown('<div class="section-header">Filters</div>', unsafe_allow_html=True)
 
-    if uploaded:
+    if file_bytes and filename:
         try:
-            drug_df = process(uploaded.read(), uploaded.name)
+            drug_df = process(file_bytes, filename)
             
             # Validate columns and show warnings
             missing_required, missing_optional = validate_columns(drug_df)
             if missing_optional:
                 with st.sidebar.expander("⚠️ Missing Optional Features"):
                     st.warning(f"Some features disabled due to missing columns: {', '.join(sorted(missing_optional))}")
-            
+
+            # ── EMERGING PATTERNS: persist this month, load baseline ────
+            # Snapshot is a handful of small per-dimension aggregate tables
+            # (KBs, not the raw rows), so this is cheap even for 50k+ claims.
+            current_month_label = history.infer_month_label(drug_df, filename)
+            current_snapshot = history.build_snapshot(drug_df)
+            history.save_snapshot(current_month_label, current_snapshot)
+
+            st.markdown("---")
+            st.markdown('<div class="section-header">Emerging Patterns</div>', unsafe_allow_html=True)
+            baseline_n = st.slider(
+                'Baseline months to compare against', min_value=1, max_value=12, value=6,
+                help='How many prior saved monthly snapshots to use as the statistical baseline '
+                     'for drift and novelty detection.'
+            )
+            historical_snapshots, baseline_months_used = history.load_baseline(
+                current_month_label, n_months=baseline_n
+            )
+
+            with st.sidebar.expander("📥 Seed historical months"):
+                st.caption(
+                    "Upload prior months' files once to backfill the baseline. After that, "
+                    "the dashboard remembers every month you upload automatically — no need "
+                    "to re-upload history again next month."
+                )
+                seed_files = st.file_uploader(
+                    "Upload one or more historical files", type=['csv', 'xlsx'],
+                    accept_multiple_files=True, key='seed_uploader',
+                )
+                if seed_files:
+                    for sf in seed_files:
+                        try:
+                            seed_bytes = sf.read()
+                            seed_df = process(seed_bytes, sf.name)
+                            seed_month = history.infer_month_label(seed_df, sf.name)
+                            if seed_month == current_month_label:
+                                st.warning(f"Skipped {sf.name}: resolves to the current month ({seed_month}).")
+                                continue
+                            history.save_snapshot(seed_month, history.build_snapshot(seed_df))
+                            st.success(f"Saved baseline snapshot for {seed_month} ({sf.name})")
+                        except Exception as e:
+                            st.error(f"Could not process {sf.name}: {e}")
+                    historical_snapshots, baseline_months_used = history.load_baseline(
+                        current_month_label, n_months=baseline_n
+                    )
+
             rejected = drug_df[drug_df['IS_REJECTED'] == 1].copy()
             approved = drug_df[drug_df['IS_REJECTED'] == 0].copy()
 
@@ -87,13 +155,69 @@ with st.sidebar:
                 📈 Rejection rate: <b style='color:{'#FF4444' if rej_rate>17 else '#FF8C00' if rej_rate>14 else '#00C853'}'>{rej_rate:.1f}%</b>
             </div>
             """, unsafe_allow_html=True)
+            # Export buttons
+            with st.sidebar.expander("Export"):
+                def _build_summary_bytes():
+                    out = io.StringIO()
+                    out.write("Rejection Code Breakdown\n")
+                    try:
+                        cs = compute_code_stats(rejected)
+                        cs.to_csv(out, index=False)
+                    except Exception:
+                        out.write("No rejection code data\n")
+
+                    out.write("\nHigh Risk Combos\n")
+                    try:
+                        hr, sf, gf = compute_drug_diag_combos(drug_df)
+                        if not hr.empty:
+                            hr.to_csv(out, index=False)
+                        else:
+                            out.write("No high risk combos\n")
+                    except Exception:
+                        out.write("No combos data\n")
+
+                    out.write("\nProvider Stats\n")
+                    try:
+                        p = compute_provider_stats(drug_df)
+                        p.to_csv(out, index=False)
+                    except Exception:
+                        out.write("No provider stats\n")
+
+                    return out.getvalue().encode('utf-8')
+
+                st.download_button(
+                    "Download Summary CSV",
+                    data=_build_summary_bytes(),
+                    file_name=f"pbm_summary_{filename}",
+                    mime="text/csv",
+                )
+                try:
+                    st.download_button(
+                        "Download Rejected Claims CSV",
+                        data=rejected.to_csv(index=False).encode('utf-8'),
+                        file_name=f"rejected_claims_{filename}",
+                        mime="text/csv",
+                    )
+                except Exception:
+                    st.warning('Unable to prepare rejected claims CSV for download.')
+
+            with st.sidebar.expander("Analysis thresholds"):
+                st.markdown(
+                    f"- Rejection rate: **>{THRESHOLDS['rejection_rate_critical']}%** critical, "
+                    f"**>{THRESHOLDS['rejection_rate_warning']}%** monitor\n"
+                    f"- High-risk combo: **≥{THRESHOLDS['combo_high_risk_rate']}%** rejection, "
+                    f"min **{THRESHOLDS['combo_min_claims']}** claims\n"
+                    f"- Flagged provider: **>{THRESHOLDS['provider_flag_rate']}%** rejection, "
+                    f"min **{THRESHOLDS['provider_flag_min_claims']}** claims\n"
+                    f"- New drug NCOV alert: min **{THRESHOLDS['new_drug_ncov_min_claims']}** claims"
+                )
         
         except Exception as e:
             st.sidebar.error(f"Error processing file: {str(e)}")
             st.stop()
 
 # ── MAIN CONTENT ───────────────────────────────────────────────
-if not uploaded or not 'drug_df' in locals():
+if not file_bytes or not filename or 'drug_df' not in locals():
     # Landing screen
     st.markdown("""
     <div style='display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:70vh;text-align:center'>
@@ -136,6 +260,11 @@ rej_rate = rej_count / total * 100 if total > 0 else 0
 
 code_stats = compute_code_stats(rejected)
 high_risk, safe_combos, gray_combos = compute_drug_diag_combos(drug_df)
+weekly_trends = compute_weekly_trends(drug_df)
+provider_investigation = compute_provider_investigation(drug_df)
+new_drugs_ncov = compute_new_drugs_always_ncov(
+    drug_df, min_claims=THRESHOLDS['new_drug_ncov_min_claims']
+)
 
 insights = gen_insights(drug_df, rejected, code_stats, high_risk)
 
@@ -143,8 +272,9 @@ total_rej_amt = rejected['TREAT_REJ_AMT'].sum() if 'TREAT_REJ_AMT' in rejected.c
 total_est_amt = drug_df['TREAT_EST_AMT'].sum() if 'TREAT_EST_AMT' in drug_df.columns else 0
 
 # ── TABS ───────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📊 Overview", "💰 Financial", "🔍 Combos", "👨‍⚕️ Providers", "🚨 Fraud & Safety"
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "📊 Overview", "💰 Financial", "🔍 Combos", "👨‍⚕️ Providers", "🚨 Fraud & Safety",
+    "🧬 Emerging Patterns",
 ])
 
 # ════════════════════════════════════════════════════
@@ -194,6 +324,12 @@ with tab1:
     display_df.columns = ['Code', 'Claims', 'Rejected Amt', '% of Rejections', 'Description']
     st.dataframe(display_df, use_container_width=True, hide_index=True)
 
+    if not weekly_trends.empty:
+        st.markdown('<div class="section-header">Weekly Trend — Volume & Rejection Rate</div>', unsafe_allow_html=True)
+        fig = plot_weekly_trends(weekly_trends)
+        if fig:
+            st.plotly_chart(fig, use_container_width=True)
+
     # MNEC breakdown
     if 'MNEC' in rejected['REJ_CODE_PREFIX'].values and 'REJ_REMARKS' in rejected.columns:
         st.markdown('<div class="section-header">MNEC Breakdown (Auto-decoded)</div>', unsafe_allow_html=True)
@@ -204,21 +340,24 @@ with tab1:
         else:
             st.info('MNEC data unavailable for breakdown.')
 
-    # Gender & Age
-    c1, c2 = st.columns(2)
-    with c1:
-        if 'MEM_GENDER' in drug_df.columns:
-            st.markdown('<div class="section-header">Rejection Rate by Gender</div>', unsafe_allow_html=True)
-            fig = plot_gender_rejection_rate(drug_df)
-            if fig:
-                st.plotly_chart(fig, use_container_width=True)
+    # Age breakdown (gender moved to Advanced expander — low actionability)
+    if 'AGE_GROUP' in drug_df.columns:
+        st.markdown('<div class="section-header">Rejection Rate by Age Group</div>', unsafe_allow_html=True)
+        fig = plot_age_rejection_rate(drug_df)
+        if fig:
+            st.plotly_chart(fig, use_container_width=True)
 
-    with c2:
-        if 'AGE_GROUP' in drug_df.columns:
-            st.markdown('<div class="section-header">Rejection Rate by Age Group</div>', unsafe_allow_html=True)
-            fig = plot_age_rejection_rate(drug_df)
-            if fig:
-                st.plotly_chart(fig, use_container_width=True)
+    with st.expander("Advanced demographics"):
+        if 'MEM_GENDER' in drug_df.columns:
+            gen = (
+                drug_df.groupby('MEM_GENDER')
+                .agg(Total=('IS_REJECTED', 'count'), Rejected=('IS_REJECTED', 'sum'))
+                .reset_index()
+            )
+            gen['Rej Rate %'] = (gen['Rejected'] / gen['Total'] * 100).round(1)
+            st.dataframe(gen, use_container_width=True, hide_index=True)
+        else:
+            st.info('Gender column not available.')
 
 # ════════════════════════════════════════════════════
 # TAB 2 — FINANCIAL
@@ -247,23 +386,11 @@ with tab2:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown('<div class="section-header">Rejected Amount by Code</div>', unsafe_allow_html=True)
-        fig = plot_rejected_amount_by_code(code_stats)
-        if fig:
-            st.plotly_chart(fig, use_container_width=True)
+    st.markdown('<div class="section-header">Rejected Amount by Code</div>', unsafe_allow_html=True)
+    fig = plot_rejected_amount_by_code(code_stats)
+    if fig:
+        st.plotly_chart(fig, use_container_width=True)
 
-    with c2:
-        st.markdown('<div class="section-header">Amount Distribution (Treemap)</div>', unsafe_allow_html=True)
-        if (not code_stats.empty and code_stats['Rejected_Amt'].fillna(0).sum() > 0):
-            fig = plot_amount_distribution_treemap(code_stats)
-            if fig:
-                st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info('No rejected amount data available for treemap.')
-
-    # Top rejected drugs by amount
     st.markdown('<div class="section-header">Top 15 Most Expensive Rejected Drugs</div>', unsafe_allow_html=True)
     fig = plot_top_rejected_drugs(rejected)
     if fig:
@@ -275,32 +402,45 @@ with tab2:
 # TAB 3 — COMBOS
 # ════════════════════════════════════════════════════
 with tab3:
-    st.markdown('<div class="section-header">High Risk Drug-Diagnosis Combinations (>70% rejection, min 20 claims)</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="section-header">High Risk Drug-Diagnosis Combinations '
+        f'(>{THRESHOLDS["combo_high_risk_rate"]}% rejection, min {THRESHOLDS["combo_min_claims"]} claims)</div>',
+        unsafe_allow_html=True,
+    )
     if len(high_risk) > 0:
         fig = plot_high_risk_combos(high_risk)
         if fig:
             st.plotly_chart(fig, use_container_width=True)
-        st.dataframe(high_risk[['DRUG_DIAG_COMBO','Total','Rejected','RejRate']].head(30),
-                     use_container_width=True, hide_index=True)
+        st.dataframe(
+            enrich_combo_display(high_risk, drug_df).head(30),
+            use_container_width=True,
+            hide_index=True,
+        )
     else:
-        st.info('No high-risk combos found this month (min 20 claims, >70% rejection).')
+        st.info(
+            f'No high-risk combos found this month (min {THRESHOLDS["combo_min_claims"]} claims, '
+            f'>{THRESHOLDS["combo_high_risk_rate"]}% rejection).'
+        )
 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown('<div class="section-header">Safe Combos (0% rejection, min 20 claims)</div>', unsafe_allow_html=True)
-        if len(safe_combos) > 0:
-            st.dataframe(safe_combos[['DRUG_DIAG_COMBO','Total','Rejected','RejRate']].head(20),
-                         use_container_width=True, hide_index=True)
-        else:
-            st.info('No safe combos found.')
-
-    with c2:
-        st.markdown('<div class="section-header">Gray Area (30-70% rejection, min 20 claims)</div>', unsafe_allow_html=True)
+    with st.expander("Gray area combos (30–70% rejection)"):
         if len(gray_combos) > 0:
-            st.dataframe(gray_combos[['DRUG_DIAG_COMBO','Total','Rejected','RejRate']].head(20),
-                         use_container_width=True, hide_index=True)
+            st.dataframe(
+                enrich_combo_display(gray_combos, drug_df).head(20),
+                use_container_width=True,
+                hide_index=True,
+            )
         else:
             st.info('No gray area combos found.')
+
+    with st.expander("Safe combos (0% rejection — reference only)"):
+        if len(safe_combos) > 0:
+            st.dataframe(
+                enrich_combo_display(safe_combos, drug_df).head(20),
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.info('No safe combos found.')
 
 # ════════════════════════════════════════════════════
 # TAB 4 — PROVIDERS
@@ -308,6 +448,10 @@ with tab3:
 with tab4:
     if 'DOC_LIC_NO' in drug_df.columns:
         prov = compute_provider_stats(drug_df)
+        flagged_provs = prov[
+            (prov['RejRate'] > THRESHOLDS['provider_flag_rate'])
+            & (prov['Claims'] >= THRESHOLDS['provider_flag_min_claims'])
+        ]
 
         p1, p2, p3 = st.columns(3)
         with p1:
@@ -317,11 +461,10 @@ with tab4:
                 <div class="metric-sub">Active this month</div>
             </div>""", unsafe_allow_html=True)
         with p2:
-            flagged_provs = prov[(prov['RejRate'] > 30) & (prov['Claims'] >= 50)]
             st.markdown(f"""<div class="metric-card red">
                 <div class="metric-label">Flagged Providers</div>
                 <div class="metric-value">{len(flagged_provs)}</div>
-                <div class="metric-sub">&gt;30% rejection, min 50 claims</div>
+                <div class="metric-sub">&gt;{THRESHOLDS['provider_flag_rate']}% rejection, min {THRESHOLDS['provider_flag_min_claims']} claims</div>
             </div>""", unsafe_allow_html=True)
         with p3:
             top_prov = prov.sort_values('RejAmt', ascending=False).iloc[0]
@@ -341,19 +484,74 @@ with tab4:
                 st.plotly_chart(fig, use_container_width=True)
 
         with c2:
-            st.markdown('<div class="section-header">⚠️ Flagged Providers (&gt;30% rejection)</div>', unsafe_allow_html=True)
+            st.markdown(
+                f'<div class="section-header">Flagged Providers (&gt;{THRESHOLDS["provider_flag_rate"]}% rejection)</div>',
+                unsafe_allow_html=True,
+            )
             if len(flagged_provs) > 0:
-                flagged_show = flagged_provs.sort_values('RejRate', ascending=False)[['DOC_LIC_NO','Claims','RejRate','RejAmt']]
+                flagged_show = flagged_provs.sort_values('RejRate', ascending=False)[
+                    ['DOC_LIC_NO', 'Claims', 'RejRate', 'RejAmt']
+                ]
                 flagged_show.columns = ['Provider', 'Claims', 'Rej Rate %', 'Rej Amount']
                 st.dataframe(flagged_show, use_container_width=True, hide_index=True)
             else:
                 st.success('No providers flagged this month.')
 
-        # Provider scatter
         st.markdown('<div class="section-header">Provider Risk Map (Claims vs Rejection Rate)</div>', unsafe_allow_html=True)
         fig = plot_provider_risk_map(prov)
         if fig:
             st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown(
+            '<div class="section-header">Investigation Queue (prioritized)</div>',
+            unsafe_allow_html=True,
+        )
+        if not provider_investigation.empty:
+            queue_cols = [
+                c for c in [
+                    'DOC_LIC_NO', 'DOC_NAME', 'InvestigationReason',
+                    'Total_Claims', 'RejRate_%', 'MNEC_Count', 'NCOV_Count', 'RejAmt',
+                ] if c in provider_investigation.columns
+            ]
+            st.dataframe(
+                provider_investigation[queue_cols].head(20),
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.info('Not enough provider data for investigation queue.')
+
+        st.markdown('<div class="section-header">Provider Drill-Down</div>', unsafe_allow_html=True)
+        provider_options = sorted(drug_df['DOC_LIC_NO'].dropna().unique().tolist())
+        default_provider = (
+            provider_investigation.iloc[0]['DOC_LIC_NO']
+            if not provider_investigation.empty
+            else provider_options[0]
+        )
+        selected_provider = st.selectbox(
+            'Select provider',
+            provider_options,
+            index=provider_options.index(default_provider) if default_provider in provider_options else 0,
+        )
+        detail = compute_provider_detail(drug_df, selected_provider)
+        if detail:
+            title = detail['doc_name'] or selected_provider
+            st.markdown(
+                f"**{title}** (`{selected_provider}`) — "
+                f"{detail['total_claims']:,} claims | "
+                f"{detail['rej_rate']}% rejection | "
+                f"{detail['rej_amt']:,.0f} rejected amount"
+            )
+            d1, d2, d3 = st.columns(3)
+            with d1:
+                st.markdown("**Top rejection codes**")
+                st.dataframe(detail['top_codes'], use_container_width=True, hide_index=True)
+            with d2:
+                st.markdown("**Top rejected drugs**")
+                st.dataframe(detail['top_drugs'], use_container_width=True, hide_index=True)
+            with d3:
+                st.markdown("**Top rejected combos**")
+                st.dataframe(detail['top_combos'], use_container_width=True, hide_index=True)
     else:
         st.warning('DOC_LIC_NO column not found in dataset.')
 
@@ -376,8 +574,9 @@ with tab5:
                     ({fraud_df['TREAT_EST_AMT'].mean()/drug_df['TREAT_EST_AMT'].mean():.1f}x higher)
                 </div>""", unsafe_allow_html=True)
 
-                show_cols = [c for c in ['DRUG_CODE','PA_PRIMARY_DIAG','PA_MEM_AGE','MEM_GENDER',
-                                         'DOC_LIC_NO','TREAT_EST_AMT','PBM_APPR_STS','REJ_CODE_PREFIX',
+                show_cols = [c for c in ['DRUG_CODE', 'DRUG_NAME', 'PA_PRIMARY_DIAG', 'PRIMARY_DIAG',
+                                         'PA_MEM_AGE', 'MEM_GENDER', 'DOC_LIC_NO', 'DOC_NAME',
+                                         'TREAT_EST_AMT', 'PBM_APPR_STS', 'REJ_CODE_PREFIX',
                                          'PA_FLAG_REASON'] if c in fraud_df.columns]
                 st.dataframe(fraud_df[show_cols], use_container_width=True, hide_index=True)
             else:
@@ -388,58 +587,210 @@ with tab5:
     with col2:
         st.markdown('<div class="section-header">🚨 Children Age Rule Violations</div>', unsafe_allow_html=True)
         if 'AGE_GROUP' in drug_df.columns:
-            child_v = rejected[(rejected['REJ_CODE_PREFIX'] == 'CODE') &
-                               (rejected['AGE_GROUP'].isin(['INFANT (0-2)','CHILD (3-12)','TEEN (13-17)']))]
+            child_v = rejected[(rejected['REJ_CODE_PREFIX'] == 'CODE') & (rejected['AGE_GROUP'].isin(['INFANT (0-2)','CHILD (3-12)','TEEN (13-17)']))]
+
             if len(child_v) > 0:
-                st.markdown(f"""<div class="insight-card critical">
+                st.markdown(f"""
+                <div class="insight-card critical">
                     🚨 <b>{len(child_v):,} age rule violations for children</b><br>
                     Adult drugs prescribed to minors. Patient safety concern.
-                </div>""", unsafe_allow_html=True)
+                </div>
+                """, unsafe_allow_html=True)
 
                 fig = plot_age_violations(child_v)
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True)
+                if fig: st.plotly_chart(fig, use_container_width=True)
 
-                st.markdown('**Top drugs violating age rules:**')
-                top_age_drugs = child_v['DRUG_CODE'].value_counts().head(10).reset_index()
-                top_age_drugs.columns = ['Drug Code', 'Violations']
-                st.dataframe(top_age_drugs, use_container_width=True, hide_index=True)
+                # # Top drugs
+                # st.markdown("### Top Drugs Violating Age Rules")
+                # top_age_drugs = (child_v['DRUG_CODE'].value_counts().head(10).reset_index())
+                # top_age_drugs.columns = ['Drug Code', 'Violations']
+
+                # st.dataframe(top_age_drugs,use_container_width=True,hide_index=True)
+
+                # Drug + Age Group combinations
+                st.markdown("### Drug + Age Group Violation Patterns")
+
+                combo = (
+                    child_v.groupby(['DRUG_CODE', 'DRUG_NAME', 'AGE_GROUP'])
+                    .size()
+                    .reset_index(name='Violations')
+                    .sort_values('Violations', ascending=False)
+                    .head(15)
+                ) if 'DRUG_NAME' in child_v.columns else (
+                    child_v.groupby(['DRUG_CODE', 'AGE_GROUP'])
+                    .size()
+                    .reset_index(name='Violations')
+                    .sort_values('Violations', ascending=False)
+                    .head(15)
+                )
+
+                st.dataframe(combo,use_container_width=True, hide_index=True )
+
             else:
                 st.success('No age rule violations for children this month.')
+
         else:
             st.info('AGE_GROUP column requires PA_MEM_AGE in dataset.')
 
-    # New drugs 100% NCOV
-    st.markdown('<div class="section-header">🆕 New Drugs with 100% Not-Covered Rejection</div>', unsafe_allow_html=True)
-    if 'SERVICE_DT' in drug_df.columns:
-        dated = drug_df[drug_df['SERVICE_DT'].notna()].copy()
-        first_seen = dated.groupby('DRUG_CODE')['SERVICE_DT'].min().reset_index()
-        first_seen.columns = ['DRUG_CODE','FIRST_SEEN']
-        dated = dated.merge(first_seen, on='DRUG_CODE')
-        dated['IS_NEW'] = (dated['FIRST_SEEN'] >= dated['SERVICE_DT'].min()).astype(int)
-        new_drugs = dated[dated['IS_NEW'] == 1]
-        ncov_stats = (new_drugs.groupby('DRUG_CODE')
-                      .agg(Total=('IS_REJECTED','count'),
-                           Rejected=('IS_REJECTED','sum'),
-                           NCOV=('REJ_CODE_PREFIX', lambda x: (x=='NCOV').sum()),
-                           Amt=('TREAT_REJ_AMT','sum'),
-                           First=('FIRST_SEEN','min'))
-                      .reset_index())
-        ncov_stats['RejRate'] = (ncov_stats['Rejected']/ncov_stats['Total']*100).round(1)
-        always_ncov = ncov_stats[
-            (ncov_stats['NCOV'] == ncov_stats['Rejected']) &
-            (ncov_stats['Rejected'] == ncov_stats['Total']) &
-            (ncov_stats['Total'] >= 5)
-        ].sort_values('Total', ascending=False)
+    st.markdown('<div class="section-header">New Drugs with 100% Not-Covered Rejection</div>', unsafe_allow_html=True)
+    st.caption('Drugs first seen in the reporting month with every claim rejected as NCOV.')
+    if not new_drugs_ncov.empty:
+        st.markdown(f"""<div class="insight-card warning">
+            🚫 <b>{len(new_drugs_ncov)} new drug codes with 100% NCOV rejection</b><br>
+            These drugs are being prescribed but are not in the coverage formulary.
+            Immediate formulary review needed.
+        </div>""", unsafe_allow_html=True)
+        show_ncov_cols = [c for c in ['DRUG_CODE', 'DRUG_NAME', 'First', 'Total', 'NCOV', 'Amt'] if c in new_drugs_ncov.columns]
+        display_ncov = new_drugs_ncov.copy()
+        if 'Amt' in display_ncov.columns:
+            display_ncov['Amt'] = display_ncov['Amt'].round(0)
+        st.dataframe(display_ncov[show_ncov_cols].head(20), use_container_width=True, hide_index=True)
+    elif 'SERVICE_DT' in drug_df.columns:
+        st.success('No new drugs with 100% NCOV rejection found this month.')
+    else:
+        st.info('SERVICE_DT column required for new-drug detection.')
 
-        if len(always_ncov) > 0:
-            st.markdown(f"""<div class="insight-card warning">
-                🚫 <b>{len(always_ncov)} new drug codes with 100% NCOV rejection</b><br>
-                These drugs are being prescribed but are not in the coverage formulary.
-                Immediate formulary review needed.
-            </div>""", unsafe_allow_html=True)
-            always_ncov['Amt'] = always_ncov['Amt'].round(0)
-            st.dataframe(always_ncov[['DRUG_CODE','First','Total','NCOV','Amt']].head(20),
-                         use_container_width=True, hide_index=True)
-        else:
-            st.success('No new drugs with 100% NCOV rejection found.')
+# ════════════════════════════════════════════════════
+# TAB 6 — EMERGING PATTERNS (statistical discovery, no hardcoded rules)
+# ════════════════════════════════════════════════════
+with tab6:
+    st.markdown(
+        '<div class="section-header">Baseline Status</div>', unsafe_allow_html=True
+    )
+    n_baseline = len(baseline_months_used)
+
+    if n_baseline == 0:
+        st.info(
+            f"📅 **{current_month_label}** is the first month on record — there's no baseline yet. "
+            "Month-over-month drift (z-scores, % change, new-combination novelty) will activate "
+            "automatically once at least one more month has been uploaded or seeded. "
+            "What you see below is same-month outlier detection: providers, drugs, and "
+            "diagnoses that already look unusual *relative to their peers this month*."
+        )
+    elif n_baseline < anomaly.MIN_BASELINE_MONTHS:
+        st.warning(
+            f"📅 Baseline currently has **{n_baseline} month** ({', '.join(baseline_months_used)}). "
+            f"Z-score drift needs {anomaly.MIN_BASELINE_MONTHS}+ months to compute a meaningful "
+            "standard deviation, so percent-change and novelty findings are active, but z-score-based "
+            "findings are limited. Upload or seed one more historical month to unlock full drift detection."
+        )
+    else:
+        st.success(
+            f"📅 Comparing **{current_month_label}** against a **{n_baseline}-month** baseline: "
+            f"{', '.join(baseline_months_used)}."
+        )
+
+    emerging_findings = anomaly.run_emerging_pattern_scan(
+        current_snapshot, historical_snapshots, drug_df=drug_df
+    )
+    summary = anomaly.summarize_scan(emerging_findings)
+
+    e1, e2, e3, e4 = st.columns(4)
+    with e1:
+        st.markdown(f"""<div class="metric-card blue">
+            <div class="metric-label">Total Findings</div>
+            <div class="metric-value">{summary['total']:,}</div>
+            <div class="metric-sub">across all dimensions</div>
+        </div>""", unsafe_allow_html=True)
+    with e2:
+        st.markdown(f"""<div class="metric-card red">
+            <div class="metric-label">Critical</div>
+            <div class="metric-value">{summary['critical']:,}</div>
+            <div class="metric-sub">investigate first</div>
+        </div>""", unsafe_allow_html=True)
+    with e3:
+        st.markdown(f"""<div class="metric-card amber">
+            <div class="metric-label">Warning</div>
+            <div class="metric-value">{summary['warning']:,}</div>
+            <div class="metric-sub">monitor closely</div>
+        </div>""", unsafe_allow_html=True)
+    with e4:
+        st.markdown(f"""<div class="metric-card purple">
+            <div class="metric-label">Never-Seen-Before</div>
+            <div class="metric-value">{summary['novel']:,}</div>
+            <div class="metric-sub">no historical precedent</div>
+        </div>""", unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    if emerging_findings.empty:
+        st.success("No statistically significant emerging patterns this month.")
+    else:
+        c1, c2 = st.columns([1.3, 1])
+        with c1:
+            st.markdown('<div class="section-header">All Findings (ranked by severity)</div>', unsafe_allow_html=True)
+            fig = plot_anomaly_scatter(emerging_findings)
+            if fig:
+                st.plotly_chart(fig, use_container_width=True)
+        with c2:
+            st.markdown('<div class="section-header">Findings by Dimension</div>', unsafe_allow_html=True)
+            fig = plot_findings_by_dimension(emerging_findings)
+            if fig:
+                st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown('<div class="section-header">Investigation Queue</div>', unsafe_allow_html=True)
+        fcol1, fcol2 = st.columns(2)
+        with fcol1:
+            dim_filter = st.multiselect(
+                'Filter by dimension', sorted(emerging_findings['Dimension'].unique()),
+                default=[],
+            )
+        with fcol2:
+            sev_filter = st.multiselect(
+                'Filter by severity', ['critical', 'warning', 'info'], default=[],
+            )
+
+        show = emerging_findings.copy()
+        if dim_filter:
+            show = show[show['Dimension'].isin(dim_filter)]
+        if sev_filter:
+            show = show[show['Severity'].isin(sev_filter)]
+
+        display_cols = ['Rank', 'Severity', 'Dimension', 'Entity', 'Metric', 'Current',
+                         'Baseline_Mean', 'Pct_Change', 'ZScore', 'Novel', 'Anomaly_Score', 'Reason']
+        st.dataframe(
+            show[display_cols].head(100),
+            use_container_width=True, hide_index=True,
+        )
+        st.caption(f"Showing {min(len(show), 100):,} of {len(show):,} matching findings.")
+
+        st.download_button(
+            "Download Full Findings CSV",
+            data=emerging_findings.to_csv(index=False).encode('utf-8'),
+            file_name=f"emerging_patterns_{current_month_label}.csv",
+            mime="text/csv",
+        )
+
+        st.markdown('<div class="section-header">Drill-Down</div>', unsafe_allow_html=True)
+        finding_options = show.head(50)['Entity'] + ' — ' + show.head(50)['Dimension']
+        if len(finding_options):
+            chosen = st.selectbox('Inspect a finding', finding_options.tolist())
+            chosen_idx = finding_options.tolist().index(chosen)
+            chosen_row = show.head(50).iloc[chosen_idx]
+            st.markdown(f"**{chosen_row['Entity']}** — {chosen_row['Dimension']} / {chosen_row['Metric']}")
+            st.markdown(
+                f"<div class='insight-card {chosen_row['Severity']}'>{chosen_row['Reason']}</div>",
+                unsafe_allow_html=True,
+            )
+
+    with st.expander("How Emerging Patterns works"):
+        st.markdown(
+            """
+Every finding compares a metric for **this month** against a statistical baseline,
+using one of four generic methods — never a hand-written fraud rule:
+
+- **Z-score** — how many standard deviations this month's value is from that
+  entity's own trailing average (provider rejection rate, drug volume, etc.)
+- **Percent change** — straightforward magnitude of the move
+- **Frequency deviation / novelty** — combinations (gender × diagnosis, age × drug,
+  drug × diagnosis) that have **zero** occurrences in every baseline month
+- **Outlier detection** — for brand-new entities with no history yet, this month's
+  volume is compared against all its current peers instead
+
+Findings are blended into a single 0–100 **Anomaly Score** and ranked. The same
+math runs identically across every dimension — providers, drugs, diagnoses,
+rejection codes, gender, age — so a new pattern type doesn't require a new rule,
+only more historical months to compare against.
+            """
+        )
+

@@ -1,7 +1,7 @@
 
 import pandas as pd
 import numpy as np
-from utils import CODE_DESC
+from utils import CODE_DESC, THRESHOLDS
 
 def gen_insights(drug_df, rejected, code_stats, high_risk):
     insights = []
@@ -9,9 +9,12 @@ def gen_insights(drug_df, rejected, code_stats, high_risk):
     rej_count = len(rejected)
     rej_rate = rej_count / total * 100
 
-    if rej_rate > 17:
-        insights.append(('critical', f'🔴 HIGH rejection rate {rej_rate:.1f}% — above 17% threshold.'))
-    elif rej_rate > 14:
+    crit = THRESHOLDS['rejection_rate_critical']
+    warn = THRESHOLDS['rejection_rate_warning']
+
+    if rej_rate > crit:
+        insights.append(('critical', f'🔴 HIGH rejection rate {rej_rate:.1f}% — above {crit}% threshold.'))
+    elif rej_rate > warn:
         insights.append(('warning', f'🟡 MODERATE rejection rate {rej_rate:.1f}% — monitor trend.'))
     else:
         insights.append(('success', f'🟢 NORMAL rejection rate {rej_rate:.1f}% — within expected range.'))
