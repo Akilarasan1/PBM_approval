@@ -70,58 +70,61 @@ with st.sidebar:
 
     if file_bytes and filename:
         try:
-            drug_df = process(file_bytes, filename)
-            
-            # Validate columns and show warnings
-            missing_required, missing_optional = validate_columns(drug_df)
+            drug_df_full = process(file_bytes, filename)
+
+            missing_required, missing_optional = validate_columns(drug_df_full)
             if missing_optional:
                 with st.sidebar.expander("⚠️ Missing Optional Features"):
                     st.warning(f"Some features disabled due to missing columns: {', '.join(sorted(missing_optional))}")
 
-            # ── EMERGING PATTERNS: persist this month, load baseline ────
-            # Snapshot is a handful of small per-dimension aggregate tables
-            # (KBs, not the raw rows), so this is cheap even for 50k+ claims.
-            current_month_label = history.infer_month_label(drug_df, filename)
+            # ── DYNAMIC PERIOD DETECTION ─────────────────────────────
+            # One uploader handles any date range. We split whatever was
+            # uploaded into per-calendar-month buckets and persist every
+            # one of them as a snapshot. This is what replaces the old
+            # separate "seed historical months" uploader: if you upload
+            # 6 or 12 months in a single file, the other months become
+            # baseline history automatically — no second upload needed.
+            month_buckets = history.split_by_month(drug_df_full)
+            month_labels_sorted = sorted(month_buckets.keys())
+
+            for m_label, m_df in month_buckets.items():
+                history.save_snapshot(m_label, history.build_snapshot(m_df))
+
+            st.markdown("---")
+            st.markdown('<div class="section-header">Reporting Period</div>', unsafe_allow_html=True)
+
+            if len(month_labels_sorted) > 1:
+                st.caption(
+                    f"📥 Detected **{len(month_labels_sorted)} months** in this file "
+                    f"({', '.join(month_labels_sorted)}) — all saved automatically as history."
+                )
+                current_month_label = st.selectbox(
+                    "Month to analyze",
+                    options=list(reversed(month_labels_sorted)),
+                    help="Tabs below show this month in detail. Every other month in this "
+                         "file (plus any from prior uploads) is available as baseline.",
+                )
+            else:
+                current_month_label = month_labels_sorted[0]
+                st.caption(f"📅 Single month detected: **{current_month_label}**")
+
+            drug_df = month_buckets[current_month_label].copy()
             current_snapshot = history.build_snapshot(drug_df)
-            history.save_snapshot(current_month_label, current_snapshot)
 
             st.markdown("---")
             st.markdown('<div class="section-header">Emerging Patterns</div>', unsafe_allow_html=True)
             baseline_n = st.slider(
                 'Baseline months to compare against', min_value=1, max_value=12, value=6,
                 help='How many prior saved monthly snapshots to use as the statistical baseline '
-                     'for drift and novelty detection.'
+                     'for drift and novelty detection. Includes earlier months from this same '
+                     'upload as well as any previously uploaded files.'
             )
             historical_snapshots, baseline_months_used = history.load_baseline(
                 current_month_label, n_months=baseline_n
             )
 
-            with st.sidebar.expander("📥 Seed historical months"):
-                st.caption(
-                    "Upload prior months' files once to backfill the baseline. After that, "
-                    "the dashboard remembers every month you upload automatically — no need "
-                    "to re-upload history again next month."
-                )
-                seed_files = st.file_uploader(
-                    "Upload one or more historical files", type=['csv', 'xlsx'],
-                    accept_multiple_files=True, key='seed_uploader',
-                )
-                if seed_files:
-                    for sf in seed_files:
-                        try:
-                            seed_bytes = sf.read()
-                            seed_df = process(seed_bytes, sf.name)
-                            seed_month = history.infer_month_label(seed_df, sf.name)
-                            if seed_month == current_month_label:
-                                st.warning(f"Skipped {sf.name}: resolves to the current month ({seed_month}).")
-                                continue
-                            history.save_snapshot(seed_month, history.build_snapshot(seed_df))
-                            st.success(f"Saved baseline snapshot for {seed_month} ({sf.name})")
-                        except Exception as e:
-                            st.error(f"Could not process {sf.name}: {e}")
-                    historical_snapshots, baseline_months_used = history.load_baseline(
-                        current_month_label, n_months=baseline_n
-                    )
+            st.markdown("---")
+            st.markdown('<div class="section-header">Filters</div>', unsafe_allow_html=True)
 
             rejected = drug_df[drug_df['IS_REJECTED'] == 1].copy()
             approved = drug_df[drug_df['IS_REJECTED'] == 0].copy()
@@ -134,10 +137,12 @@ with st.sidebar:
 
             if sel_gender != 'All':
                 drug_df = drug_df[drug_df['MEM_GENDER'] == sel_gender]
+                drug_df_full = drug_df_full[drug_df_full['MEM_GENDER'] == sel_gender]
                 rejected = drug_df[drug_df['IS_REJECTED'] == 1]
                 approved = drug_df[drug_df['IS_REJECTED'] == 0]
             if sel_age != 'All' and 'AGE_GROUP' in drug_df.columns:
                 drug_df = drug_df[drug_df['AGE_GROUP'] == sel_age]
+                drug_df_full = drug_df_full[drug_df_full['AGE_GROUP'] == sel_age]
                 rejected = drug_df[drug_df['IS_REJECTED'] == 1]
                 approved = drug_df[drug_df['IS_REJECTED'] == 0]
 
@@ -149,6 +154,7 @@ with st.sidebar:
             st.markdown(f"""
             <div style='font-size:11px;color:#8B949E;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:12px'>Quick Stats</div>
             <div style='font-size:13px;color:#C9D1D9;line-height:2'>
+                🗓 Period: <b style='color:#E6EDF3'>{current_month_label}</b><br>
                 📊 Total claims: <b style='color:#E6EDF3'>{total:,}</b><br>
                 ❌ Rejected: <b style='color:#FF4444'>{rej_count:,}</b><br>
                 ✅ Approved: <b style='color:#00C853'>{total-rej_count:,}</b><br>
@@ -188,14 +194,14 @@ with st.sidebar:
                 st.download_button(
                     "Download Summary CSV",
                     data=_build_summary_bytes(),
-                    file_name=f"pbm_summary_{filename}",
+                    file_name=f"pbm_summary_{current_month_label}_{filename}",
                     mime="text/csv",
                 )
                 try:
                     st.download_button(
                         "Download Rejected Claims CSV",
                         data=rejected.to_csv(index=False).encode('utf-8'),
-                        file_name=f"rejected_claims_{filename}",
+                        file_name=f"rejected_claims_{current_month_label}_{filename}",
                         mime="text/csv",
                     )
                 except Exception:
@@ -211,10 +217,11 @@ with st.sidebar:
                     f"min **{THRESHOLDS['provider_flag_min_claims']}** claims\n"
                     f"- New drug NCOV alert: min **{THRESHOLDS['new_drug_ncov_min_claims']}** claims"
                 )
-        
+
         except Exception as e:
             st.sidebar.error(f"Error processing file: {str(e)}")
             st.stop()
+
 
 # ── MAIN CONTENT ───────────────────────────────────────────────
 if not file_bytes or not filename or 'drug_df' not in locals():
@@ -260,7 +267,11 @@ rej_rate = rej_count / total * 100 if total > 0 else 0
 
 code_stats = compute_code_stats(rejected)
 high_risk, safe_combos, gray_combos = compute_drug_diag_combos(drug_df)
-weekly_trends = compute_weekly_trends(drug_df)
+
+# weekly_trends = compute_weekly_trends(drug_df)
+weekly_trends = compute_weekly_trends(drug_df_full)
+
+
 provider_investigation = compute_provider_investigation(drug_df)
 new_drugs_ncov = compute_new_drugs_always_ncov(
     drug_df, min_claims=THRESHOLDS['new_drug_ncov_min_claims']
@@ -307,7 +318,7 @@ with tab1:
         st.markdown('<div class="section-header">Rejection Codes — Volume & Financial</div>', unsafe_allow_html=True)
         fig = plot_rejection_codes_volume_financial(code_stats)
         if fig:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig,  width="stretch")
         else:
             st.info('No rejection code data available.')
 
@@ -322,13 +333,20 @@ with tab1:
     display_df['Count'] = display_df['Count'].apply(lambda x: f'{x:,}')
     display_df['Pct'] = display_df['Pct'].apply(lambda x: f'{x:.1f}%')
     display_df.columns = ['Code', 'Claims', 'Rejected Amt', '% of Rejections', 'Description']
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
+    st.dataframe(display_df,  width="stretch", hide_index=True)
+
+    # if not weekly_trends.empty:
+    #     st.markdown('<div class="section-header">Weekly Trend — Volume & Rejection Rate</div>', unsafe_allow_html=True)
+    #     fig = plot_weekly_trends(weekly_trends)
+    #     if fig:
+    #         st.plotly_chart(fig, use_container_width=True)
 
     if not weekly_trends.empty:
-        st.markdown('<div class="section-header">Weekly Trend — Volume & Rejection Rate</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-header">Weekly Trend — Full Uploaded Range</div>', unsafe_allow_html=True)
         fig = plot_weekly_trends(weekly_trends)
         if fig:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig,  width="stretch")
+
 
     # MNEC breakdown
     if 'MNEC' in rejected['REJ_CODE_PREFIX'].values and 'REJ_REMARKS' in rejected.columns:
@@ -336,7 +354,7 @@ with tab1:
         mnec_df = rejected[rejected['REJ_CODE_PREFIX'] == 'MNEC']
         fig = plot_mnec_breakdown(mnec_df)
         if fig:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig,  width="stretch")
         else:
             st.info('MNEC data unavailable for breakdown.')
 
@@ -345,7 +363,7 @@ with tab1:
         st.markdown('<div class="section-header">Rejection Rate by Age Group</div>', unsafe_allow_html=True)
         fig = plot_age_rejection_rate(drug_df)
         if fig:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig,  width="stretch")
 
     with st.expander("Advanced demographics"):
         if 'MEM_GENDER' in drug_df.columns:
@@ -355,7 +373,7 @@ with tab1:
                 .reset_index()
             )
             gen['Rej Rate %'] = (gen['Rejected'] / gen['Total'] * 100).round(1)
-            st.dataframe(gen, use_container_width=True, hide_index=True)
+            st.dataframe(gen,  width="stretch", hide_index=True)
         else:
             st.info('Gender column not available.')
 
@@ -389,12 +407,12 @@ with tab2:
     st.markdown('<div class="section-header">Rejected Amount by Code</div>', unsafe_allow_html=True)
     fig = plot_rejected_amount_by_code(code_stats)
     if fig:
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig,  width="stretch")
 
     st.markdown('<div class="section-header">Top 15 Most Expensive Rejected Drugs</div>', unsafe_allow_html=True)
     fig = plot_top_rejected_drugs(rejected)
     if fig:
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig,  width="stretch")
     else:
         st.info('No rejected drug data available.')
 
@@ -410,10 +428,10 @@ with tab3:
     if len(high_risk) > 0:
         fig = plot_high_risk_combos(high_risk)
         if fig:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig,  width="stretch")
         st.dataframe(
             enrich_combo_display(high_risk, drug_df).head(30),
-            use_container_width=True,
+             width="stretch",
             hide_index=True,
         )
     else:
@@ -426,7 +444,7 @@ with tab3:
         if len(gray_combos) > 0:
             st.dataframe(
                 enrich_combo_display(gray_combos, drug_df).head(20),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
         else:
@@ -436,7 +454,7 @@ with tab3:
         if len(safe_combos) > 0:
             st.dataframe(
                 enrich_combo_display(safe_combos, drug_df).head(20),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
         else:
@@ -481,7 +499,7 @@ with tab4:
             st.markdown('<div class="section-header">Top 20 Providers by Volume</div>', unsafe_allow_html=True)
             fig = plot_provider_volume_and_rejection(prov)
             if fig:
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig,  width="stretch")
 
         with c2:
             st.markdown(
@@ -493,14 +511,14 @@ with tab4:
                     ['DOC_LIC_NO', 'Claims', 'RejRate', 'RejAmt']
                 ]
                 flagged_show.columns = ['Provider', 'Claims', 'Rej Rate %', 'Rej Amount']
-                st.dataframe(flagged_show, use_container_width=True, hide_index=True)
+                st.dataframe(flagged_show,  width="stretch", hide_index=True)
             else:
                 st.success('No providers flagged this month.')
 
         st.markdown('<div class="section-header">Provider Risk Map (Claims vs Rejection Rate)</div>', unsafe_allow_html=True)
         fig = plot_provider_risk_map(prov)
         if fig:
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig,  width="stretch")
 
         st.markdown(
             '<div class="section-header">Investigation Queue (prioritized)</div>',
@@ -515,7 +533,7 @@ with tab4:
             ]
             st.dataframe(
                 provider_investigation[queue_cols].head(20),
-                use_container_width=True,
+                 width="stretch",
                 hide_index=True,
             )
         else:
@@ -545,13 +563,13 @@ with tab4:
             d1, d2, d3 = st.columns(3)
             with d1:
                 st.markdown("**Top rejection codes**")
-                st.dataframe(detail['top_codes'], use_container_width=True, hide_index=True)
+                st.dataframe(detail['top_codes'],  width="stretch", hide_index=True)
             with d2:
                 st.markdown("**Top rejected drugs**")
-                st.dataframe(detail['top_drugs'], use_container_width=True, hide_index=True)
+                st.dataframe(detail['top_drugs'],  width="stretch", hide_index=True)
             with d3:
                 st.markdown("**Top rejected combos**")
-                st.dataframe(detail['top_combos'], use_container_width=True, hide_index=True)
+                st.dataframe(detail['top_combos'],  width="stretch", hide_index=True)
     else:
         st.warning('DOC_LIC_NO column not found in dataset.')
 
@@ -578,7 +596,7 @@ with tab5:
                                          'PA_MEM_AGE', 'MEM_GENDER', 'DOC_LIC_NO', 'DOC_NAME',
                                          'TREAT_EST_AMT', 'PBM_APPR_STS', 'REJ_CODE_PREFIX',
                                          'PA_FLAG_REASON'] if c in fraud_df.columns]
-                st.dataframe(fraud_df[show_cols], use_container_width=True, hide_index=True)
+                st.dataframe(fraud_df[show_cols],  width="stretch", hide_index=True)
             else:
                 st.success('No fraud-flagged claims this month.')
         else:
@@ -598,14 +616,14 @@ with tab5:
                 """, unsafe_allow_html=True)
 
                 fig = plot_age_violations(child_v)
-                if fig: st.plotly_chart(fig, use_container_width=True)
+                if fig: st.plotly_chart(fig,  width="stretch")
 
                 # # Top drugs
                 # st.markdown("### Top Drugs Violating Age Rules")
                 # top_age_drugs = (child_v['DRUG_CODE'].value_counts().head(10).reset_index())
                 # top_age_drugs.columns = ['Drug Code', 'Violations']
 
-                # st.dataframe(top_age_drugs,use_container_width=True,hide_index=True)
+                # st.dataframe(top_age_drugs,width="stretch",hide_index=True)
 
                 # Drug + Age Group combinations
                 st.markdown("### Drug + Age Group Violation Patterns")
@@ -624,7 +642,7 @@ with tab5:
                     .head(15)
                 )
 
-                st.dataframe(combo,use_container_width=True, hide_index=True )
+                st.dataframe(combo, width="stretch", hide_index=True )
 
             else:
                 st.success('No age rule violations for children this month.')
@@ -644,7 +662,7 @@ with tab5:
         display_ncov = new_drugs_ncov.copy()
         if 'Amt' in display_ncov.columns:
             display_ncov['Amt'] = display_ncov['Amt'].round(0)
-        st.dataframe(display_ncov[show_ncov_cols].head(20), use_container_width=True, hide_index=True)
+        st.dataframe(display_ncov[show_ncov_cols].head(20), width="stretch", hide_index=True)
     elif 'SERVICE_DT' in drug_df.columns:
         st.success('No new drugs with 100% NCOV rejection found this month.')
     else:
@@ -721,12 +739,12 @@ with tab6:
             st.markdown('<div class="section-header">All Findings (ranked by severity)</div>', unsafe_allow_html=True)
             fig = plot_anomaly_scatter(emerging_findings)
             if fig:
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
         with c2:
             st.markdown('<div class="section-header">Findings by Dimension</div>', unsafe_allow_html=True)
             fig = plot_findings_by_dimension(emerging_findings)
             if fig:
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
 
         st.markdown('<div class="section-header">Investigation Queue</div>', unsafe_allow_html=True)
         fcol1, fcol2 = st.columns(2)
@@ -750,7 +768,7 @@ with tab6:
                          'Baseline_Mean', 'Pct_Change', 'ZScore', 'Novel', 'Anomaly_Score', 'Reason']
         st.dataframe(
             show[display_cols].head(100),
-            use_container_width=True, hide_index=True,
+            width="stretch", hide_index=True,
         )
         st.caption(f"Showing {min(len(show), 100):,} of {len(show):,} matching findings.")
 

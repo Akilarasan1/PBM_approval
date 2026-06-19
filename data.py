@@ -94,7 +94,9 @@ def process(file_bytes, filename):
 
     # Parse service date and extract week
     if 'SERVICE_DT' in drug_df.columns:
-        drug_df['SERVICE_DT'] = pd.to_datetime(drug_df['SERVICE_DT'], errors='coerce')
+        # drug_df['SERVICE_DT'] = pd.to_datetime(drug_df['SERVICE_DT'], errors='coerce')
+        drug_df['SERVICE_DT'] = pd.to_datetime(drug_df['SERVICE_DT'],format='%d-%m-%Y %H:%M',errors='coerce')
+
         drug_df['WEEK'] = drug_df['SERVICE_DT'].dt.isocalendar().week.astype(str)
 
     # Normalize rejection remarks for MNEC/refill analysis

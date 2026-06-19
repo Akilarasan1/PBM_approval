@@ -166,7 +166,8 @@ def _generic_drift(current_df, historical, table_name, entity_cols, value_col,
     base = _baseline_stats(hist_long, entity_cols, value_col)
 
     merged = current_df[entity_cols + [value_col]].merge(base, on=entity_cols, how="left")
-    merged["n_months"] = merged["n_months"].fillna(0)
+    # merged["n_months"] = merged["n_months"].fillna(0)
+    merged["n_months"] = pd.to_numeric(merged["n_months"],errors="coerce").fillna(0)
 
     peer_vals = current_df[value_col]
     peer_mean, peer_std = peer_vals.mean(), peer_vals.std(ddof=0)
@@ -419,7 +420,15 @@ def run_emerging_pattern_scan(current_snapshot, historical, drug_df=None):
     if not findings:
         return pd.DataFrame(columns=FINDINGS_COLUMNS[1:])
 
-    result = pd.concat(findings, ignore_index=True)
+    # result = pd.concat(findings, ignore_index=True)
+
+    valid_findings = [df for df in findings if not df.empty and not df.isna().all().all()]
+    if valid_findings:
+        result = pd.concat(valid_findings, ignore_index=True)
+    else:
+        result = pd.DataFrame()
+
+
     result = result.sort_values("Anomaly_Score", ascending=False).reset_index(drop=True)
     result.insert(0, "Rank", range(1, len(result) + 1))
     return result

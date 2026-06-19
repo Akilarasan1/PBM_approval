@@ -199,3 +199,44 @@ def delete_month(month_label):
         for f in d.glob("*.parquet"):
             f.unlink()
         d.rmdir()
+
+
+def split_by_month(drug_df):
+    """Split a claims dataframe into per-month sub-dataframes using SERVICE_DT.
+
+    This is what makes the single uploader dynamic: a file with 1 month,
+    3 months, 6 months, or a full year of claims all flow through the same
+    path. Each calendar month found becomes its own bucket; rows with a
+    missing SERVICE_DT (if any) are folded into the most recent bucket
+    rather than silently dropped.
+
+    Returns
+    -------
+    dict[str, DataFrame] ordered chronologically, e.g.
+        {"2025-11": df_nov, "2025-12": df_dec, "2026-01": df_jan}
+    If SERVICE_DT is absent or entirely null, returns a single bucket
+    under today's month label (preserves old single-month behavior for
+    files that don't carry dates).
+    """
+    if "SERVICE_DT" not in drug_df.columns or drug_df["SERVICE_DT"].notna().sum() == 0:
+        label = pd.Timestamp.today().strftime("%Y-%m")
+        return {label: drug_df.copy()}
+
+    periods = drug_df["SERVICE_DT"].dt.to_period("M")
+    labels = periods.astype(str)
+    valid_labels = sorted(labels[periods.notna()].unique())
+    if not valid_labels:
+        label = pd.Timestamp.today().strftime("%Y-%m")
+        return {label: drug_df.copy()}
+
+    latest_label = valid_labels[-1]
+    undated_mask = drug_df["SERVICE_DT"].isna()
+
+    out = {}
+    for label in valid_labels:
+        out[label] = drug_df[labels == label].copy()
+    if undated_mask.any():
+        out[latest_label] = pd.concat(
+            [out[latest_label], drug_df[undated_mask]], ignore_index=False
+        )
+    return out
