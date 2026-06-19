@@ -70,140 +70,140 @@ with st.sidebar:
 
     if file_bytes and filename:
         try:
-            drug_df_full = process(file_bytes, filename)
+            drug_df_full_raw = process(file_bytes, filename)
 
-            missing_required, missing_optional = validate_columns(drug_df_full)
+            missing_required, missing_optional = validate_columns(drug_df_full_raw)
             if missing_optional:
                 with st.sidebar.expander("⚠️ Missing Optional Features"):
                     st.warning(f"Some features disabled due to missing columns: {', '.join(sorted(missing_optional))}")
 
             # ── DYNAMIC PERIOD DETECTION ─────────────────────────────
-            # One uploader handles any date range. We split whatever was
-            # uploaded into per-calendar-month buckets and persist every
-            # one of them as a snapshot. This is what replaces the old
-            # separate "seed historical months" uploader: if you upload
-            # 6 or 12 months in a single file, the other months become
-            # baseline history automatically — no second upload needed.
-            month_buckets = history.split_by_month(drug_df_full)
+            # Split whatever was uploaded into per-calendar-month buckets
+            # and persist every one as a snapshot — this is what lets one
+            # uploader handle 1, 3, 6, or 12 months interchangeably.
+            month_buckets = history.split_by_month(drug_df_full_raw)
             month_labels_sorted = sorted(month_buckets.keys())
 
             for m_label, m_df in month_buckets.items():
                 history.save_snapshot(m_label, history.build_snapshot(m_df))
 
+            OVERALL_LABEL = "📊 Overall (All Months)"
+            is_multi_month = len(month_labels_sorted) > 1
+
             st.markdown("---")
             st.markdown('<div class="section-header">Reporting Period</div>', unsafe_allow_html=True)
 
-            if len(month_labels_sorted) > 1:
+            if is_multi_month:
                 st.caption(
-                    f"📥 Detected **{len(month_labels_sorted)} months** in this file "
+                    f"📥 Detected **{len(month_labels_sorted)} months** "
                     f"({', '.join(month_labels_sorted)}) — all saved automatically as history."
                 )
-                current_month_label = st.selectbox(
-                    "Month to analyze",
-                    options=list(reversed(month_labels_sorted)),
-                    help="Tabs below show this month in detail. Every other month in this "
-                         "file (plus any from prior uploads) is available as baseline.",
+                period_options = [OVERALL_LABEL] + list(reversed(month_labels_sorted))
+                selected_period = st.selectbox(
+                    "Period",
+                    options=period_options,
+                    index=0,  # default = Overall
+                    help="'Overall' combines every uploaded month into one summary. "
+                         "Pick a specific month to drill into just that period.",
                 )
             else:
-                current_month_label = month_labels_sorted[0]
-                st.caption(f"📅 Single month detected: **{current_month_label}**")
+                selected_period = month_labels_sorted[0]
+                st.caption(f"📅 Single month detected: **{selected_period}**")
 
-            drug_df = month_buckets[current_month_label].copy()
-            current_snapshot = history.build_snapshot(drug_df)
+            is_overall = is_multi_month and selected_period == OVERALL_LABEL
+            latest_month_label = month_labels_sorted[-1]
+
+            # The month used for drift/novelty math is always one specific
+            # month — in Overall view that's the most recent one uploaded.
+            emerging_month_label = latest_month_label if is_overall else selected_period
+
+            # ── FILTER OPTIONS (derived from the full unfiltered upload) ─
+            st.markdown("---")
+            st.markdown('<div class="section-header">Filters</div>', unsafe_allow_html=True)
+
+            gender_opts = ['All'] + sorted(drug_df_full_raw['MEM_GENDER'].dropna().unique().tolist()) if 'MEM_GENDER' in drug_df_full_raw.columns else ['All']
+            sel_gender = st.selectbox('Gender', gender_opts)
+
+            age_opts = ['All'] + sorted(drug_df_full_raw['AGE_GROUP'].dropna().unique().tolist()) if 'AGE_GROUP' in drug_df_full_raw.columns else ['All']
+            sel_age = st.selectbox('Age Group', age_opts)
+
+            def _apply_filters(df):
+                if sel_gender != 'All' and 'MEM_GENDER' in df.columns:
+                    df = df[df['MEM_GENDER'] == sel_gender]
+                if sel_age != 'All' and 'AGE_GROUP' in df.columns:
+                    df = df[df['AGE_GROUP'] == sel_age]
+                return df
+
+            # drug_df_full = entire uploaded range, filtered — drives the
+            # weekly trend chart regardless of which period is selected.
+            drug_df_full = _apply_filters(drug_df_full_raw.copy())
+
+            # drug_df = the scoped view every other tab consumes.
+            drug_df = drug_df_full if is_overall else _apply_filters(month_buckets[selected_period].copy())
+
+            period_label = (
+                f"Overall ({month_labels_sorted[0]} → {month_labels_sorted[-1]})"
+                if is_overall else selected_period
+            )
+
+            rejected = drug_df[drug_df['IS_REJECTED'] == 1].copy()
+            approved = drug_df[drug_df['IS_REJECTED'] == 0].copy()
 
             st.markdown("---")
             st.markdown('<div class="section-header">Emerging Patterns</div>', unsafe_allow_html=True)
             baseline_n = st.slider(
                 'Baseline months to compare against', min_value=1, max_value=12, value=6,
-                help='How many prior saved monthly snapshots to use as the statistical baseline '
-                     'for drift and novelty detection. Includes earlier months from this same '
-                     'upload as well as any previously uploaded files.'
+                help='Drift/novelty always compares ONE month against its trailing baseline. '
+                     'In Overall view this is automatically the most recent month uploaded.'
             )
+            current_snapshot = history.build_snapshot(month_buckets[emerging_month_label])
             historical_snapshots, baseline_months_used = history.load_baseline(
-                current_month_label, n_months=baseline_n
+                emerging_month_label, n_months=baseline_n
             )
 
             st.markdown("---")
-            st.markdown('<div class="section-header">Filters</div>', unsafe_allow_html=True)
-
-            rejected = drug_df[drug_df['IS_REJECTED'] == 1].copy()
-            approved = drug_df[drug_df['IS_REJECTED'] == 0].copy()
-
-            gender_opts = ['All'] + sorted(drug_df['MEM_GENDER'].dropna().unique().tolist()) if 'MEM_GENDER' in drug_df.columns else ['All']
-            sel_gender = st.selectbox('Gender', gender_opts)
-
-            age_opts = ['All'] + sorted(drug_df['AGE_GROUP'].dropna().unique().tolist()) if 'AGE_GROUP' in drug_df.columns else ['All']
-            sel_age = st.selectbox('Age Group', age_opts)
-
-            if sel_gender != 'All':
-                drug_df = drug_df[drug_df['MEM_GENDER'] == sel_gender]
-                drug_df_full = drug_df_full[drug_df_full['MEM_GENDER'] == sel_gender]
-                rejected = drug_df[drug_df['IS_REJECTED'] == 1]
-                approved = drug_df[drug_df['IS_REJECTED'] == 0]
-            if sel_age != 'All' and 'AGE_GROUP' in drug_df.columns:
-                drug_df = drug_df[drug_df['AGE_GROUP'] == sel_age]
-                drug_df_full = drug_df_full[drug_df_full['AGE_GROUP'] == sel_age]
-                rejected = drug_df[drug_df['IS_REJECTED'] == 1]
-                approved = drug_df[drug_df['IS_REJECTED'] == 0]
-
-            st.markdown("---")
-            # Quick stats
             total = len(drug_df)
             rej_count = len(rejected)
             rej_rate = rej_count / total * 100 if total > 0 else 0
             st.markdown(f"""
             <div style='font-size:11px;color:#8B949E;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:12px'>Quick Stats</div>
             <div style='font-size:13px;color:#C9D1D9;line-height:2'>
-                🗓 Period: <b style='color:#E6EDF3'>{current_month_label}</b><br>
+                🗓 Period: <b style='color:#E6EDF3'>{period_label}</b><br>
                 📊 Total claims: <b style='color:#E6EDF3'>{total:,}</b><br>
                 ❌ Rejected: <b style='color:#FF4444'>{rej_count:,}</b><br>
                 ✅ Approved: <b style='color:#00C853'>{total-rej_count:,}</b><br>
                 📈 Rejection rate: <b style='color:{'#FF4444' if rej_rate>17 else '#FF8C00' if rej_rate>14 else '#00C853'}'>{rej_rate:.1f}%</b>
             </div>
             """, unsafe_allow_html=True)
-            # Export buttons
+
             with st.sidebar.expander("Export"):
                 def _build_summary_bytes():
                     out = io.StringIO()
                     out.write("Rejection Code Breakdown\n")
                     try:
-                        cs = compute_code_stats(rejected)
-                        cs.to_csv(out, index=False)
+                        compute_code_stats(rejected).to_csv(out, index=False)
                     except Exception:
                         out.write("No rejection code data\n")
-
                     out.write("\nHigh Risk Combos\n")
                     try:
                         hr, sf, gf = compute_drug_diag_combos(drug_df)
-                        if not hr.empty:
-                            hr.to_csv(out, index=False)
-                        else:
-                            out.write("No high risk combos\n")
+                        (hr if not hr.empty else pd.DataFrame()).to_csv(out, index=False)
                     except Exception:
                         out.write("No combos data\n")
-
                     out.write("\nProvider Stats\n")
                     try:
-                        p = compute_provider_stats(drug_df)
-                        p.to_csv(out, index=False)
+                        compute_provider_stats(drug_df).to_csv(out, index=False)
                     except Exception:
                         out.write("No provider stats\n")
-
                     return out.getvalue().encode('utf-8')
 
-                st.download_button(
-                    "Download Summary CSV",
-                    data=_build_summary_bytes(),
-                    file_name=f"pbm_summary_{current_month_label}_{filename}",
-                    mime="text/csv",
-                )
+                tag = period_label.replace(' ', '_').replace('(', '').replace(')', '').replace('→', 'to')
+                st.download_button("Download Summary CSV", data=_build_summary_bytes(),
+                                    file_name=f"pbm_summary_{tag}_{filename}", mime="text/csv")
                 try:
-                    st.download_button(
-                        "Download Rejected Claims CSV",
-                        data=rejected.to_csv(index=False).encode('utf-8'),
-                        file_name=f"rejected_claims_{current_month_label}_{filename}",
-                        mime="text/csv",
-                    )
+                    st.download_button("Download Rejected Claims CSV",
+                                        data=rejected.to_csv(index=False).encode('utf-8'),
+                                        file_name=f"rejected_claims_{tag}_{filename}", mime="text/csv")
                 except Exception:
                     st.warning('Unable to prepare rejected claims CSV for download.')
 
@@ -672,14 +672,19 @@ with tab5:
 # TAB 6 — EMERGING PATTERNS (statistical discovery, no hardcoded rules)
 # ════════════════════════════════════════════════════
 with tab6:
-    st.markdown(
-        '<div class="section-header">Baseline Status</div>', unsafe_allow_html=True
-    )
+    if is_overall:
+        st.info(
+            f"📊 You're viewing **Overall**. Drift/novelty detection always compares one "
+            f"specific month against its trailing baseline, so this tab is analyzing the "
+            f"most recent month in your upload: **{emerging_month_label}**. Pick that month "
+            f"directly in the Period selector if you want to drill into a different one."
+        )
+    st.markdown('<div class="section-header">Baseline Status</div>', unsafe_allow_html=True)
     n_baseline = len(baseline_months_used)
 
     if n_baseline == 0:
         st.info(
-            f"📅 **{current_month_label}** is the first month on record — there's no baseline yet. "
+            f"📅 **{emerging_month_label}** is the first month on record — there's no baseline yet. "
             "Month-over-month drift (z-scores, % change, new-combination novelty) will activate "
             "automatically once at least one more month has been uploaded or seeded. "
             "What you see below is same-month outlier detection: providers, drugs, and "
@@ -694,7 +699,7 @@ with tab6:
         )
     else:
         st.success(
-            f"📅 Comparing **{current_month_label}** against a **{n_baseline}-month** baseline: "
+            f"📅 Comparing **{emerging_month_label}** against a **{n_baseline}-month** baseline: "
             f"{', '.join(baseline_months_used)}."
         )
 
@@ -775,7 +780,7 @@ with tab6:
         st.download_button(
             "Download Full Findings CSV",
             data=emerging_findings.to_csv(index=False).encode('utf-8'),
-            file_name=f"emerging_patterns_{current_month_label}.csv",
+            file_name=f"emerging_patterns_{emerging_month_label}.csv",
             mime="text/csv",
         )
 
