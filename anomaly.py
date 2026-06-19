@@ -32,6 +32,9 @@ No new "rule" logic — the math is identical for every dimension.
 
 import numpy as np
 import pandas as pd
+import warnings
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", FutureWarning)
 
 # ── GENERIC STATISTICAL SENSITIVITY KNOBS (not fraud rules) ─────
 MIN_BASELINE_MONTHS = 2      # need >=2 historical months for a meaningful std
@@ -422,12 +425,15 @@ def run_emerging_pattern_scan(current_snapshot, historical, drug_df=None):
 
     # result = pd.concat(findings, ignore_index=True)
 
-    valid_findings = [df for df in findings if not df.empty and not df.isna().all().all()]
+    valid_findings = [
+    df.dropna(axis=1, how='all')
+    for df in findings
+    if not df.empty and not df.isna().all().all()
+        ]
     if valid_findings:
         result = pd.concat(valid_findings, ignore_index=True)
     else:
         result = pd.DataFrame()
-
 
     result = result.sort_values("Anomaly_Score", ascending=False).reset_index(drop=True)
     result.insert(0, "Rank", range(1, len(result) + 1))

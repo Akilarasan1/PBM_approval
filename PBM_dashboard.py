@@ -273,9 +273,8 @@ weekly_trends = compute_weekly_trends(drug_df_full)
 
 
 provider_investigation = compute_provider_investigation(drug_df)
-new_drugs_ncov = compute_new_drugs_always_ncov(
-    drug_df, min_claims=THRESHOLDS['new_drug_ncov_min_claims']
-)
+new_drugs_ncov = compute_new_drugs_always_ncov(drug_df, min_claims=THRESHOLDS['new_drug_ncov_min_claims'])
+
 
 insights = gen_insights(drug_df, rejected, code_stats, high_risk)
 
@@ -658,10 +657,11 @@ with tab5:
             These drugs are being prescribed but are not in the coverage formulary.
             Immediate formulary review needed.
         </div>""", unsafe_allow_html=True)
-        show_ncov_cols = [c for c in ['DRUG_CODE', 'DRUG_NAME', 'First', 'Total', 'NCOV', 'Amt'] if c in new_drugs_ncov.columns]
+
+        show_ncov_cols = [c for c in ['DRUG_CODE', 'DRUG_NAME', 'Total_Claims', 'Rejected_Claims', 'NCOV_Rejections', 'RejRate_%', 'Rejected_Amount'] if c in new_drugs_ncov.columns]
         display_ncov = new_drugs_ncov.copy()
-        if 'Amt' in display_ncov.columns:
-            display_ncov['Amt'] = display_ncov['Amt'].round(0)
+        if 'Rejected_Amount' in display_ncov.columns:
+            display_ncov['Rejected_Amount'] = display_ncov['Rejected_Amount'].round(0)
         st.dataframe(display_ncov[show_ncov_cols].head(20), width="stretch", hide_index=True)
     elif 'SERVICE_DT' in drug_df.columns:
         st.success('No new drugs with 100% NCOV rejection found this month.')
