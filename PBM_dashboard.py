@@ -771,10 +771,20 @@ with tab6:
 
         display_cols = ['Rank', 'Severity', 'Dimension', 'Entity', 'Metric', 'Current',
                          'Baseline_Mean', 'Pct_Change', 'ZScore', 'Novel', 'Anomaly_Score', 'Reason']
+        # st.dataframe(
+        #     show[display_cols].head(100),
+        #     width="stretch", hide_index=True,
+        # )
+
+        available_cols = [c for c in display_cols if c in show.columns]
+
         st.dataframe(
-            show[display_cols].head(100),
-            width="stretch", hide_index=True,
+            show[available_cols].head(100),
+            use_container_width=True,
+            hide_index=True,
         )
+
+
         st.caption(f"Showing {min(len(show), 100):,} of {len(show):,} matching findings.")
 
         st.download_button(

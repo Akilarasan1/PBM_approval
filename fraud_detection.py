@@ -324,10 +324,7 @@ def _categorize_spike(pct_change) -> str:
 
 
 # ── INVESTIGATION QUEUE PRIORITIZATION ──────────────────────────
-def build_investigation_queue(
-    emerging_findings: pd.DataFrame,
-    max_findings: int = 50,
-) -> pd.DataFrame:
+def build_investigation_queue(emerging_findings: pd.DataFrame,max_findings: int = 50,) -> pd.DataFrame:
     """
     Build a prioritized investigation queue combining all fraud signals.
     

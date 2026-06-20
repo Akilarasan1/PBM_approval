@@ -229,7 +229,7 @@ def compute_weekly_trends(drug_df):
     return weekly
 
 
-def compute_new_drugs_always_ncov(drug_df, min_claims=5):
+def compute_new_drugs_always_ncov(drug_df, full_df=None, min_claims=5):
     """
     Find ALL drug codes with 100% NCOV rejection in the current month.
     
@@ -237,9 +237,19 @@ def compute_new_drugs_always_ncov(drug_df, min_claims=5):
     1. Filter to current month claims only
     2. For each drug, count total claims and NCOV rejections
     3. Flag if: 100% of claims are rejected AND 100% of rejections are NCOV
+
+    If `full_df` is supplied (the full uploaded date range, across every
+    month on record), each flagged drug is additionally checked against
+    its own drug-diagnosis combination(s) to see whether that exact combo
+    was EVER approved anywhere in the upload. This distinguishes a
+    genuinely brand-new/never-covered drug from one that WAS covered
+    before and something changed (formulary drop, miscoding, etc.).
     
     Args:
-        drug_df: DataFrame with claims
+        drug_df: DataFrame with claims (the scoped/current-month view)
+        full_df: DataFrame spanning the full uploaded date range, used only
+            for the "ever approved" history lookup. If None, the
+            Ever_Approved columns are omitted.
         min_claims: Minimum claims threshold
         
     Returns:
