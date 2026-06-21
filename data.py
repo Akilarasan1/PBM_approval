@@ -229,6 +229,140 @@ def compute_weekly_trends(drug_df):
     return weekly
 
 
+# def compute_new_drugs_always_ncov(drug_df, full_df=None, min_claims=5):
+#     """
+#     Find ALL drug codes with 100% NCOV rejection in the current month.
+    
+#     Logic:
+#     1. Filter to current month claims only
+#     2. For each drug, count total claims and NCOV rejections
+#     3. Flag if: 100% of claims are rejected AND 100% of rejections are NCOV
+
+#     If `full_df` is supplied (the full uploaded date range, across every
+#     month on record), each flagged drug is additionally checked against
+#     its own drug-diagnosis combination(s) to see whether that exact combo
+#     was EVER approved anywhere in the upload. This distinguishes a
+#     genuinely brand-new/never-covered drug from one that WAS covered
+#     before and something changed (formulary drop, miscoding, etc.).
+    
+#     Args:
+#         drug_df: DataFrame with claims (the scoped/current-month view)
+#         full_df: DataFrame spanning the full uploaded date range, used only
+#             for the "ever approved" history lookup. If None, the
+#             Ever_Approved columns are omitted.
+#         min_claims: Minimum claims threshold
+        
+#     Returns:
+#         DataFrame with suspicious drugs (100% NCOV rejection this month)
+#     """
+
+   
+
+#     required_cols = ['SERVICE_DT', 'DRUG_CODE', 'IS_REJECTED', 'REJ_CODE_PREFIX']
+#     missing = [c for c in required_cols if c not in drug_df.columns]
+    
+#     if missing:
+#         return pd.DataFrame()
+
+#     # Filter to dated records only
+#     dated = drug_df[drug_df['SERVICE_DT'].notna()].copy()
+#     if dated.empty:
+#         return pd.DataFrame()
+
+#     # Ensure datetime
+#     dated['SERVICE_DT'] = pd.to_datetime(dated['SERVICE_DT'], errors='coerce')
+#     dated = dated[dated['SERVICE_DT'].notna()]
+#     if dated.empty:
+#         return pd.DataFrame()
+
+#     # ── KEY CHANGE: Filter to CURRENT MONTH (not just new drugs) ──
+#     period_end = dated['SERVICE_DT'].max()
+#     period_start = period_end.replace(day=1)
+    
+#     # Get ALL drugs in current month (new OR existing)
+#     current_month_drugs = dated[
+#         (dated['SERVICE_DT'] >= period_start) & (dated['SERVICE_DT'] <= period_end)
+#     ].copy()
+    
+#     if current_month_drugs.empty:
+#         return pd.DataFrame()
+
+#     # ── NCOV COUNTING: From rejected claims only ──────────────────
+#     # REJ_CODE_PREFIX is only populated for REJECTED claims (IS_REJECTED=1)
+#     # So we count NCOV only from the rejected subset
+    
+#     rejected_claims = current_month_drugs[current_month_drugs['IS_REJECTED'] == 1].copy()
+    
+#     if rejected_claims.empty:
+#         return pd.DataFrame()
+    
+#     # Clean REJ_CODE_PREFIX for consistent matching
+#     rejected_claims['REJ_CODE_PREFIX'] = (
+#         rejected_claims['REJ_CODE_PREFIX']
+#         .astype(str)
+#         .str.upper()
+#         .str.strip()
+#     )
+    
+#     # Aggregate statistics for ALL drugs in current month
+#     ncov_stats = (
+#         current_month_drugs.groupby('DRUG_CODE')
+#         .agg(
+#             Total=('IS_REJECTED', 'count'),           # All claims this month
+#             Rejected=('IS_REJECTED', 'sum'),          # Rejected count this month
+#             Rejected_Amount=('TREAT_REJ_AMT', 'sum') if 'TREAT_REJ_AMT' in current_month_drugs.columns else ('IS_REJECTED', 'sum')
+#         )
+#         .reset_index()
+#     )
+    
+#     # Count NCOV in rejected claims only
+#     ncov_count = (
+#         rejected_claims.groupby('DRUG_CODE')['REJ_CODE_PREFIX']
+#         .apply(lambda x: x.str.contains('NCOV', na=False).sum())
+#         .reset_index()
+#         .rename(columns={'REJ_CODE_PREFIX': 'NCOV_Count'})
+#     )
+    
+#     # Merge NCOV counts
+#     ncov_stats = ncov_stats.merge(ncov_count, on='DRUG_CODE', how='left')
+#     ncov_stats['NCOV_Count'] = ncov_stats['NCOV_Count'].fillna(0).astype(int)
+    
+#     # Calculate rejection rate
+#     ncov_stats['RejRate_%'] = (ncov_stats['Rejected'] / ncov_stats['Total'] * 100).round(1)
+    
+#     # ── FLAG CRITERIA ──────────────────────────────────────────────
+#     # A drug is suspicious if:
+#     # 1. It has minimum claim threshold
+#     # 2. 100% of claims are rejected (Total == Rejected)
+#     # 3. 100% of rejections are NCOV (Rejected == NCOV_Count)
+#     # 4. At least 1 NCOV rejection
+#     always_ncov = ncov_stats[
+#         (ncov_stats['Total'] >= min_claims)
+#         & (ncov_stats['Rejected'] == ncov_stats['Total'])  # 100% rejection
+#         & (ncov_stats['NCOV_Count'] == ncov_stats['Rejected'])  # 100% NCOV
+#         & (ncov_stats['NCOV_Count'] > 0)  # At least 1 NCOV
+#     ].copy()
+    
+#     if always_ncov.empty:
+#         return pd.DataFrame()
+
+#     if 'DRUG_NAME' in drug_df.columns:
+#         names = drug_df[['DRUG_CODE', 'DRUG_NAME']].drop_duplicates('DRUG_CODE')
+#         always_ncov = always_ncov.merge(names, on='DRUG_CODE', how='left')
+
+#     # Sort by NCOV count (highest first)
+#     always_ncov = always_ncov.sort_values('NCOV_Count', ascending=False)
+
+#     # Rename for display
+#     always_ncov = always_ncov.rename(columns={
+#         'Total': 'Total_Claims',
+#         'Rejected': 'Rejected_Claims',
+#         'NCOV_Count': 'NCOV_Rejections',
+#         'Amt': 'Rejected_Amount'
+#     })
+#     return always_ncov
+
+
 def compute_new_drugs_always_ncov(drug_df, full_df=None, min_claims=5):
     """
     Find ALL drug codes with 100% NCOV rejection in the current month.
@@ -256,8 +390,6 @@ def compute_new_drugs_always_ncov(drug_df, full_df=None, min_claims=5):
         DataFrame with suspicious drugs (100% NCOV rejection this month)
     """
 
-   
-
     required_cols = ['SERVICE_DT', 'DRUG_CODE', 'IS_REJECTED', 'REJ_CODE_PREFIX']
     missing = [c for c in required_cols if c not in drug_df.columns]
     
@@ -276,8 +408,12 @@ def compute_new_drugs_always_ncov(drug_df, full_df=None, min_claims=5):
         return pd.DataFrame()
 
     # ── KEY CHANGE: Filter to CURRENT MONTH (not just new drugs) ──
+    # period_end = dated['SERVICE_DT'].max()
+    # period_start = period_end.replace(day=1)
+
     period_end = dated['SERVICE_DT'].max()
-    period_start = period_end.replace(day=1)
+    period_start = period_end.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
     
     # Get ALL drugs in current month (new OR existing)
     current_month_drugs = dated[
@@ -288,9 +424,6 @@ def compute_new_drugs_always_ncov(drug_df, full_df=None, min_claims=5):
         return pd.DataFrame()
 
     # ── NCOV COUNTING: From rejected claims only ──────────────────
-    # REJ_CODE_PREFIX is only populated for REJECTED claims (IS_REJECTED=1)
-    # So we count NCOV only from the rejected subset
-    
     rejected_claims = current_month_drugs[current_month_drugs['IS_REJECTED'] == 1].copy()
     
     if rejected_claims.empty:
@@ -308,8 +441,8 @@ def compute_new_drugs_always_ncov(drug_df, full_df=None, min_claims=5):
     ncov_stats = (
         current_month_drugs.groupby('DRUG_CODE')
         .agg(
-            Total=('IS_REJECTED', 'count'),           # All claims this month
-            Rejected=('IS_REJECTED', 'sum'),          # Rejected count this month
+            Total=('IS_REJECTED', 'count'),
+            Rejected=('IS_REJECTED', 'sum'),
             Rejected_Amount=('TREAT_REJ_AMT', 'sum') if 'TREAT_REJ_AMT' in current_month_drugs.columns else ('IS_REJECTED', 'sum')
         )
         .reset_index()
@@ -331,16 +464,11 @@ def compute_new_drugs_always_ncov(drug_df, full_df=None, min_claims=5):
     ncov_stats['RejRate_%'] = (ncov_stats['Rejected'] / ncov_stats['Total'] * 100).round(1)
     
     # ── FLAG CRITERIA ──────────────────────────────────────────────
-    # A drug is suspicious if:
-    # 1. It has minimum claim threshold
-    # 2. 100% of claims are rejected (Total == Rejected)
-    # 3. 100% of rejections are NCOV (Rejected == NCOV_Count)
-    # 4. At least 1 NCOV rejection
     always_ncov = ncov_stats[
         (ncov_stats['Total'] >= min_claims)
-        & (ncov_stats['Rejected'] == ncov_stats['Total'])  # 100% rejection
-        & (ncov_stats['NCOV_Count'] == ncov_stats['Rejected'])  # 100% NCOV
-        & (ncov_stats['NCOV_Count'] > 0)  # At least 1 NCOV
+        & (ncov_stats['Rejected'] == ncov_stats['Total'])
+        & (ncov_stats['NCOV_Count'] == ncov_stats['Rejected'])
+        & (ncov_stats['NCOV_Count'] > 0)
     ].copy()
     
     if always_ncov.empty:
@@ -360,7 +488,66 @@ def compute_new_drugs_always_ncov(drug_df, full_df=None, min_claims=5):
         'NCOV_Count': 'NCOV_Rejections',
         'Amt': 'Rejected_Amount'
     })
+
+    # ── EVER APPROVED? (drug-diagnosis combo, full uploaded history) ───
+    always_ncov['Ever_Approved'] = False
+    always_ncov['First_Approved_Date'] = pd.NaT
+    always_ncov['Last_Approved_Date'] = pd.NaT
+    always_ncov['Approved_Claims_Count'] = 0
+
+    has_full_history = (
+        full_df is not None
+        and 'DRUG_DIAG_COMBO' in full_df.columns
+        and 'SERVICE_DT' in full_df.columns
+        and 'IS_REJECTED' in full_df.columns
+        and 'DRUG_DIAG_COMBO' in current_month_drugs.columns
+    )
+
+    if has_full_history:
+        flagged_drugs = set(always_ncov['DRUG_CODE'])
+
+        flagged_combos = (
+            current_month_drugs[current_month_drugs['DRUG_CODE'].isin(flagged_drugs)]
+            [['DRUG_CODE', 'DRUG_DIAG_COMBO']]
+            .drop_duplicates()
+        )
+
+        approved_history = full_df[full_df['IS_REJECTED'] == 0][['DRUG_DIAG_COMBO', 'SERVICE_DT']].copy()
+        approved_history['SERVICE_DT'] = pd.to_datetime(approved_history['SERVICE_DT'], errors='coerce')
+        approved_history = approved_history.dropna(subset=['SERVICE_DT'])
+
+        approval_summary = (
+            approved_history.groupby('DRUG_DIAG_COMBO')['SERVICE_DT']
+            .agg(First_Approved_Date='min', Last_Approved_Date='max', Approved_Claims_Count='count')
+            .reset_index()
+        )
+
+        combo_with_history = flagged_combos.merge(approval_summary, on='DRUG_DIAG_COMBO', how='left')
+        drug_level = (
+            combo_with_history.groupby('DRUG_CODE')
+            .agg(
+                Ever_Approved=('Approved_Claims_Count', lambda s: s.notna().any()),
+                First_Approved_Date=('First_Approved_Date', 'min'),
+                Last_Approved_Date=('Last_Approved_Date', 'max'),
+                Approved_Claims_Count=('Approved_Claims_Count', 'sum'),
+            )
+            .reset_index()
+        )
+        drug_level['Approved_Claims_Count'] = drug_level['Approved_Claims_Count'].fillna(0).astype(int)
+
+        always_ncov = always_ncov.drop(
+            columns=['Ever_Approved', 'First_Approved_Date', 'Last_Approved_Date', 'Approved_Claims_Count']
+        ).merge(drug_level, on='DRUG_CODE', how='left')
+
+        always_ncov['Ever_Approved'] = always_ncov['Ever_Approved'].fillna(False)
+        always_ncov['Approved_Claims_Count'] = always_ncov['Approved_Claims_Count'].fillna(0).astype(int)
+        always_ncov['First_Approved_Date'] = always_ncov['First_Approved_Date'].dt.strftime('%Y-%m-%d')
+        always_ncov['Last_Approved_Date'] = always_ncov['Last_Approved_Date'].dt.strftime('%Y-%m-%d')
+        always_ncov = always_ncov.sort_values('NCOV_Rejections', ascending=False)
+
     return always_ncov
+
+
 
 
 def compute_provider_investigation(drug_df, min_claims=20):
@@ -419,6 +606,75 @@ def compute_provider_investigation(drug_df, min_claims=20):
         investigation = investigation.merge(names, on='DOC_LIC_NO', how='left')
 
     return investigation.sort_values(['MNEC_Count', 'RejAmt'], ascending=False)
+
+
+
+def compute_payment_anomalies(drug_df):
+    """
+    Detect financial data-integrity anomalies in the paid/requested/rejected
+    amount fields. Two independent issues, kept separate because they need
+    different follow-up:
+
+    1. rejected_paid — claims marked PBM_REJECT (IS_REJECTED=1) that still
+       carry a non-zero TREAT_APPR_AMT (paid amount). A rejected claim
+       should show $0 paid; this is almost certainly a field-population
+       bug rather than a real payment.
+    2. Overpayment — TREAT_APPR_AMT exceeds TREAT_EST_AMT (paid more than
+       was requested), split into:
+         - zero_requested: TREAT_EST_AMT == 0 but something was still paid.
+           Usually a missing/zero source value, not a genuine overpayment.
+         - genuine_overpayment: TREAT_EST_AMT > 0 and still exceeded — the
+           system paid out more than was actually requested.
+
+    Args:
+        drug_df: DataFrame with claims
+
+    Returns:
+        dict of DataFrames: {'rejected_paid', 'zero_requested', 'genuine_overpayment'}
+    """
+    empty = {'rejected_paid': pd.DataFrame(), 'zero_requested': pd.DataFrame(),
+             'genuine_overpayment': pd.DataFrame()}
+
+    required = {'TREAT_APPR_AMT', 'TREAT_EST_AMT', 'IS_REJECTED'}
+    if not required.issubset(drug_df.columns):
+        return empty
+
+    df = drug_df.copy()
+    df['TREAT_APPR_AMT'] = df['TREAT_APPR_AMT'].fillna(0)
+    df['TREAT_EST_AMT'] = df['TREAT_EST_AMT'].fillna(0)
+
+    rejected_paid = df[(df['IS_REJECTED'] == 1) & (df['TREAT_APPR_AMT'] > 0)].copy()
+
+    overpaid = df[df['TREAT_APPR_AMT'] > df['TREAT_EST_AMT']].copy()
+    overpaid['Excess_Amt'] = (overpaid['TREAT_APPR_AMT'] - overpaid['TREAT_EST_AMT']).round(2)
+
+    zero_requested = overpaid[overpaid['TREAT_EST_AMT'] == 0].copy()
+    genuine_overpayment = overpaid[overpaid['TREAT_EST_AMT'] > 0].copy()
+
+    return {
+        'rejected_paid': rejected_paid,
+        'zero_requested': zero_requested,
+        'genuine_overpayment': genuine_overpayment,
+    }
+
+
+def summarize_payment_anomalies(anomalies):
+    """Small KPI summary dict for the Payment Integrity section."""
+    rp = anomalies.get('rejected_paid', pd.DataFrame())
+    zr = anomalies.get('zero_requested', pd.DataFrame())
+    go = anomalies.get('genuine_overpayment', pd.DataFrame())
+    return {
+        'rejected_paid_count': len(rp),
+        'rejected_paid_amt': round(rp['TREAT_APPR_AMT'].sum(), 2) if len(rp) else 0,
+        'zero_requested_count': len(zr),
+        'zero_requested_amt': round(zr['Excess_Amt'].sum(), 2) if len(zr) else 0,
+        'genuine_overpayment_count': len(go),
+        'genuine_overpayment_amt': round(go['Excess_Amt'].sum(), 2) if len(go) else 0,
+    }
+
+
+
+
 
 
 def compute_provider_detail(drug_df, doc_lic_no):

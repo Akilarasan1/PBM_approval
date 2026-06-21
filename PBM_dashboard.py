@@ -7,11 +7,16 @@ from pathlib import Path
 from insight import gen_insights
 
 from utils import STREAMLIT_CSS, THRESHOLDS, SAMPLE_DATA_FILE
+
 from data import (
     process, compute_code_stats, compute_drug_diag_combos, compute_provider_stats,
     compute_weekly_trends, compute_new_drugs_always_ncov, compute_provider_investigation,
     compute_provider_detail, enrich_combo_display, validate_columns,
+    compute_payment_anomalies, summarize_payment_anomalies,
 )
+
+
+
 from viz import (
     plot_rejection_codes_volume_financial, plot_mnec_breakdown,
     plot_age_rejection_rate, plot_rejected_amount_by_code,
@@ -273,8 +278,16 @@ weekly_trends = compute_weekly_trends(drug_df_full)
 
 
 provider_investigation = compute_provider_investigation(drug_df)
-new_drugs_ncov = compute_new_drugs_always_ncov(drug_df, min_claims=THRESHOLDS['new_drug_ncov_min_claims'])
+# new_drugs_ncov = compute_new_drugs_always_ncov(drug_df, min_claims=THRESHOLDS['new_drug_ncov_min_claims'])
 
+
+payment_anomalies = compute_payment_anomalies(drug_df)
+payment_anomaly_summary = summarize_payment_anomalies(payment_anomalies)
+
+
+new_drugs_ncov = compute_new_drugs_always_ncov(
+    drug_df, full_df=drug_df_full, min_claims=THRESHOLDS['new_drug_ncov_min_claims']
+)
 
 insights = gen_insights(drug_df, rejected, code_stats, high_risk)
 
@@ -651,6 +664,24 @@ with tab5:
 
     st.markdown('<div class="section-header">New Drugs with 100% Not-Covered Rejection</div>', unsafe_allow_html=True)
     st.caption('Drugs first seen in the reporting month with every claim rejected as NCOV.')
+    # if not new_drugs_ncov.empty:
+    #     st.markdown(f"""<div class="insight-card warning">
+    #         🚫 <b>{len(new_drugs_ncov)} new drug codes with 100% NCOV rejection</b><br>
+    #         These drugs are being prescribed but are not in the coverage formulary.
+    #         Immediate formulary review needed.
+    #     </div>""", unsafe_allow_html=True)
+
+    #     show_ncov_cols = [c for c in ['DRUG_CODE', 'DRUG_NAME', 'Total_Claims', 'Rejected_Claims', 'NCOV_Rejections', 'RejRate_%', 'Rejected_Amount'] if c in new_drugs_ncov.columns]
+    #     display_ncov = new_drugs_ncov.copy()
+    #     if 'Rejected_Amount' in display_ncov.columns:
+    #         display_ncov['Rejected_Amount'] = display_ncov['Rejected_Amount'].round(0)
+    #     st.dataframe(display_ncov[show_ncov_cols].head(20), width="stretch", hide_index=True)
+    # elif 'SERVICE_DT' in drug_df.columns:
+    #     st.success('No new drugs with 100% NCOV rejection found this month.')
+    # else:
+    #     st.info('SERVICE_DT column required for new-drug detection.')
+
+
     if not new_drugs_ncov.empty:
         st.markdown(f"""<div class="insight-card warning">
             🚫 <b>{len(new_drugs_ncov)} new drug codes with 100% NCOV rejection</b><br>
@@ -658,15 +689,84 @@ with tab5:
             Immediate formulary review needed.
         </div>""", unsafe_allow_html=True)
 
-        show_ncov_cols = [c for c in ['DRUG_CODE', 'DRUG_NAME', 'Total_Claims', 'Rejected_Claims', 'NCOV_Rejections', 'RejRate_%', 'Rejected_Amount'] if c in new_drugs_ncov.columns]
+        if 'Ever_Approved' in new_drugs_ncov.columns:
+            was_approved = new_drugs_ncov[new_drugs_ncov['Ever_Approved']]
+            if len(was_approved) > 0:
+                st.markdown(f"""<div class="insight-card critical">
+                    ⚠️ <b>{len(was_approved)} of these were APPROVED before</b> for the same
+                    drug-diagnosis combination, elsewhere in the upload. This isn't a new/never-covered
+                    drug — something changed (formulary drop, coding bug). Prioritize these first.
+                </div>""", unsafe_allow_html=True)
+
+        show_ncov_cols = [c for c in [
+            'DRUG_CODE', 'DRUG_NAME', 'Total_Claims', 'Rejected_Claims', 'NCOV_Rejections',
+            'RejRate_%', 'Rejected_Amount', 'Ever_Approved', 'First_Approved_Date',
+            'Last_Approved_Date', 'Approved_Claims_Count',
+        ] if c in new_drugs_ncov.columns]
         display_ncov = new_drugs_ncov.copy()
         if 'Rejected_Amount' in display_ncov.columns:
             display_ncov['Rejected_Amount'] = display_ncov['Rejected_Amount'].round(0)
         st.dataframe(display_ncov[show_ncov_cols].head(20), width="stretch", hide_index=True)
+
     elif 'SERVICE_DT' in drug_df.columns:
         st.success('No new drugs with 100% NCOV rejection found this month.')
     else:
         st.info('SERVICE_DT column required for new-drug detection.')
+
+
+    st.markdown('<div class="section-header">💵 Payment Integrity Anomalies</div>', unsafe_allow_html=True)
+    st.caption('Claims where the paid amount is inconsistent with the rejection status or the requested amount.')
+
+    pa1, pa2, pa3 = st.columns(3)
+    with pa1:
+        st.markdown(f"""<div class="metric-card red">
+            <div class="metric-label">Rejected But Paid</div>
+            <div class="metric-value">{payment_anomaly_summary['rejected_paid_count']:,}</div>
+            <div class="metric-sub">{payment_anomaly_summary['rejected_paid_amt']:,.0f} paid on rejected claims</div>
+        </div>""", unsafe_allow_html=True)
+    with pa2:
+        st.markdown(f"""<div class="metric-card amber">
+            <div class="metric-label">Overpaid (Real Request)</div>
+            <div class="metric-value">{payment_anomaly_summary['genuine_overpayment_count']:,}</div>
+            <div class="metric-sub">{payment_anomaly_summary['genuine_overpayment_amt']:,.0f} excess paid</div>
+        </div>""", unsafe_allow_html=True)
+    with pa3:
+        st.markdown(f"""<div class="metric-card blue">
+            <div class="metric-label">Paid With $0 Requested</div>
+            <div class="metric-value">{payment_anomaly_summary['zero_requested_count']:,}</div>
+            <div class="metric-sub">{payment_anomaly_summary['zero_requested_amt']:,.0f} — likely missing source value</div>
+        </div>""", unsafe_allow_html=True)
+
+    if any(payment_anomaly_summary[k] for k in ('rejected_paid_count', 'genuine_overpayment_count', 'zero_requested_count')):
+        if payment_anomaly_summary['rejected_paid_count'] > 0:
+            with st.expander(f"🔴 Rejected-but-paid claims ({payment_anomaly_summary['rejected_paid_count']:,}) — should be $0 paid"):
+                rp = payment_anomalies['rejected_paid']
+                cols = [c for c in ['DRUG_CODE', 'DRUG_NAME', 'DOC_LIC_NO', 'REJ_CODE_PREFIX',
+                                    'TREAT_EST_AMT', 'TREAT_APPR_AMT', 'TREAT_REJ_AMT', 'SERVICE_DT']
+                        if c in rp.columns]
+                st.dataframe(rp[cols].sort_values('TREAT_APPR_AMT', ascending=False),
+                             width="stretch", hide_index=True)
+
+        if payment_anomaly_summary['genuine_overpayment_count'] > 0:
+            with st.expander(f"🟠 Genuine overpayments — paid more than requested ({payment_anomaly_summary['genuine_overpayment_count']:,})"):
+                go = payment_anomalies['genuine_overpayment']
+                cols = [c for c in ['DRUG_CODE', 'DRUG_NAME', 'DOC_LIC_NO',
+                                    'TREAT_EST_AMT', 'TREAT_APPR_AMT', 'Excess_Amt', 'SERVICE_DT']
+                        if c in go.columns]
+                st.dataframe(go[cols].sort_values('Excess_Amt', ascending=False),
+                             width="stretch", hide_index=True)
+
+        if payment_anomaly_summary['zero_requested_count'] > 0:
+            with st.expander(f"🔵 Paid with $0 requested — likely missing source value ({payment_anomaly_summary['zero_requested_count']:,})"):
+                zr = payment_anomalies['zero_requested']
+                cols = [c for c in ['DRUG_CODE', 'DRUG_NAME', 'DOC_LIC_NO',
+                                    'TREAT_EST_AMT', 'TREAT_APPR_AMT', 'SERVICE_DT']
+                        if c in zr.columns]
+                st.dataframe(zr[cols].sort_values('TREAT_APPR_AMT', ascending=False),
+                             width="stretch", hide_index=True)
+    else:
+        st.success('No payment integrity anomalies found this month.')
+
 
 # ════════════════════════════════════════════════════
 # TAB 6 — EMERGING PATTERNS (statistical discovery, no hardcoded rules)
