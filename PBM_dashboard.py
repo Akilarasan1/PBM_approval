@@ -156,10 +156,19 @@ with st.sidebar:
 
             st.markdown("---")
             st.markdown('<div class="section-header">Emerging Patterns</div>', unsafe_allow_html=True)
+            enable_patterns = st.toggle(
+                "🔍 Enable Pattern Detection",
+                value=True,
+                help="ON: compares your latest month against historical months to "
+                     "automatically find new patterns (no fixed rules) — shown in "
+                     "Fraud & Safety and the Emerging Patterns tab. "
+                     "OFF: skip this, just show plain claims analytics."
+            )
             baseline_n = st.slider(
                 'Baseline months to compare against', min_value=1, max_value=12, value=6,
                 help='Drift/novelty always compares ONE month against its trailing baseline. '
-                     'In Overall view this is automatically the most recent month uploaded.'
+                     'In Overall view this is automatically the most recent month uploaded.',
+                disabled=not enable_patterns,
             )
             current_snapshot = history.build_snapshot(month_buckets[emerging_month_label])
             historical_snapshots, baseline_months_used = history.load_baseline(
@@ -283,6 +292,16 @@ provider_investigation = compute_provider_investigation(drug_df)
 
 payment_anomalies = compute_payment_anomalies(drug_df)
 payment_anomaly_summary = summarize_payment_anomalies(payment_anomalies)
+
+# Computed once here (not inside a tab) so both Tab 5 (Fraud & Safety —
+# condensed "newly discovered" callout) and Tab 6 (Emerging Patterns —
+# full ranked investigation queue) can reuse the same scan instead of
+# running the statistical engine twice per page load.
+
+if enable_patterns:
+    emerging_findings = anomaly.run_emerging_pattern_scan(current_snapshot, historical_snapshots, drug_df=drug_df)
+else:
+    emerging_findings = pd.DataFrame(columns=anomaly.FINDINGS_COLUMNS[1:])
 
 
 new_drugs_ncov = compute_new_drugs_always_ncov(
@@ -588,7 +607,44 @@ with tab4:
 # ════════════════════════════════════════════════════
 # TAB 5 — FRAUD & SAFETY
 # ════════════════════════════════════════════════════
+
 with tab5:
+    st.markdown('<div class="section-header">🆕 Newly Discovered This Month</div>', unsafe_allow_html=True)
+    st.caption(
+        "Statistically discovered — no hardcoded rule wrote these. Same generic drift/novelty "
+        "engine as the Emerging Patterns tab, filtered to the dimensions most relevant to fraud "
+        "and safety review (gender × diagnosis, age × drug, new drug-diagnosis combos, diagnosis "
+        "volume drift). Full ranked list with drill-down is in the Emerging Patterns tab."
+    )
+
+    FRAUD_RELEVANT_DIMENSIONS = [
+        'Gender \u00d7 Diagnosis', 'Age \u00d7 Drug', 'New Drug-Diagnosis Combo', 'Diagnosis Drift',
+    ]
+    if not enable_patterns:
+        st.info("🔌 Pattern Detection is turned off. Enable it in the sidebar (Emerging Patterns section) to see dynamically discovered findings here.")
+    else:
+        newly_discovered = (
+            emerging_findings[emerging_findings['Dimension'].isin(FRAUD_RELEVANT_DIMENSIONS)].sort_values('Anomaly_Score', ascending=False)
+            if not emerging_findings.empty else emerging_findings
+        )
+
+        if newly_discovered.empty:
+            st.info(
+                "No statistically significant new patterns this month. If this is the first month "
+                "on record, cross-combination novelty (e.g. gender × diagnosis) needs at least one "
+                "baseline month before it activates — check the Emerging Patterns tab for baseline status."
+            )
+        else:
+            for _, row in newly_discovered.head(8).iterrows():
+                st.markdown(
+                    f"<div class='insight-card {row['Severity']}'>"
+                    f"<b>{row['Dimension']}</b> — {row['Entity']}<br>{row['Reason']}"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+            if len(newly_discovered) > 8:
+                st.caption(f"+ {len(newly_discovered) - 8:,} more — see the Emerging Patterns tab for the full ranked queue.")
+
     col1, col2 = st.columns(2)
 
     with col1:
@@ -772,6 +828,9 @@ with tab5:
 # TAB 6 — EMERGING PATTERNS (statistical discovery, no hardcoded rules)
 # ════════════════════════════════════════════════════
 with tab6:
+    if not enable_patterns:
+        st.info("🔌 Pattern Detection is turned off. Enable it in the sidebar (Emerging Patterns section) to use this tab.")
+
     if is_overall:
         st.info(
             f"📊 You're viewing **Overall**. Drift/novelty detection always compares one "

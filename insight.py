@@ -1,9 +1,9 @@
-
 import pandas as pd
 import numpy as np
 from utils import CODE_DESC, THRESHOLDS
 
-def gen_insights(drug_df, rejected, code_stats, high_risk):
+def gen_insights(drug_df, rejected, code_stats, high_risk,
+                  new_drugs_ncov=None, payment_anomaly_summary=None, emerging_findings=None):
     insights = []
     total = len(drug_df)
     rej_count = len(rejected)
@@ -67,5 +67,35 @@ def gen_insights(drug_df, rejected, code_stats, high_risk):
         if len(fraud_n) > 0:
             insights.append(('critical', f'🔍 FRAUD FLAG: {len(fraud_n):,} claims flagged ({fraud_n["IS_REJECTED"].mean()*100:.1f}% rejection) → Review with compliance.'))
 
-    
+    # ── NCOV drugs that WERE approved before (formulary drop / coding bug) ──
+    if new_drugs_ncov is not None and not new_drugs_ncov.empty and 'Ever_Approved' in new_drugs_ncov.columns:
+        was_approved = new_drugs_ncov[new_drugs_ncov['Ever_Approved']]
+        if len(was_approved) > 0:
+            insights.append(('critical',
+                f'⚠️ {len(was_approved)} drug(s) now 100% NCOV-rejected WERE approved before for the '
+                f'same diagnosis → likely a formulary drop or coding bug, not a genuinely new drug.'))
+
+    # ── Payment integrity anomalies ──────────────────────────────────────
+    if payment_anomaly_summary is not None:
+        rp_n = payment_anomaly_summary.get('rejected_paid_count', 0)
+        if rp_n > 0:
+            rp_amt = payment_anomaly_summary.get('rejected_paid_amt', 0)
+            insights.append(('critical',
+                f'💰 {rp_n:,} rejected claims still show a paid amount ({rp_amt:,.0f} total) → '
+                f'audit for payment leakage.'))
+
+        go_n = payment_anomaly_summary.get('genuine_overpayment_count', 0)
+        if go_n > 0:
+            go_amt = payment_anomaly_summary.get('genuine_overpayment_amt', 0)
+            insights.append(('warning',
+                f'💰 {go_n:,} claims paid MORE than requested ({go_amt:,.0f} excess) → review for overpayment.'))
+
+    # ── Dynamically discovered patterns (no hardcoded rule) ──────────────
+    if emerging_findings is not None and not emerging_findings.empty:
+        crit_n = int((emerging_findings['Severity'] == 'critical').sum())
+        if crit_n > 0:
+            insights.append(('critical',
+                f'🆕 {crit_n} critical statistically-discovered pattern(s) this month (new combos, '
+                f'demographic mismatches, volume spikes) → see Fraud & Safety / Emerging Patterns.'))
+
     return insights

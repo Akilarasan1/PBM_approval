@@ -30,7 +30,7 @@ def validate_columns(df):
     return missing_required, missing_optional
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner="Processing uploaded file — large Excel files can take a minute or more...")
 def process(file_bytes, filename):
     """
     Process uploaded PBM claims file and add derived columns.
