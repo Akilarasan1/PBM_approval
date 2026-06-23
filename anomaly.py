@@ -519,10 +519,13 @@ def detect_new_combo_growth(current_snapshot, historical):
             f"already has {claims:,.0f} claim(s) this month."
         )
 
-    return detect_cross_novelty(
+
+    new_combo = detect_cross_novelty(
         cur, historical, "combo_stats", ["DRUG_DIAG_COMBO"],
         "New Drug-Diagnosis Combo", reason, min_claims=3,
     )
+
+    return new_combo
 
 
 # ── MASTER ORCHESTRATOR ───────────────────────────────────────────

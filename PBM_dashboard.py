@@ -7,15 +7,13 @@ from pathlib import Path
 from insight import gen_insights, summarize_finding
 import time
 from utils import STREAMLIT_CSS, THRESHOLDS, SAMPLE_DATA_FILE
-
+import numpy as np
 from data import (
     process, compute_code_stats, compute_drug_diag_combos, compute_provider_stats,
     compute_weekly_trends, compute_new_drugs_always_ncov, compute_provider_investigation,
     compute_provider_detail, enrich_combo_display, validate_columns,
     compute_payment_anomalies, summarize_payment_anomalies,
 )
-
-
 
 from viz import (
     plot_rejection_codes_volume_financial, plot_mnec_breakdown,
@@ -834,11 +832,12 @@ with tab5:
                     combination — prioritize these first.
                 </div>""", unsafe_allow_html=True)
 
-        show_ncov_cols = [c for c in [
-            'DRUG_CODE', 'DRUG_NAME', 'Total_Claims', 'Rejected_Claims', 'NCOV_Rejections',
-            'RejRate_%', 'Rejected_Amount', 'Ever_Approved', 'First_Approved_Date',
-            'Last_Approved_Date', 'Approved_Claims_Count',
-        ] if c in new_drugs_ncov.columns]
+
+        show_ncov_cols = [c for c in ['DRUG_CODE','DRUG_NAME','Total_Claims','NCOV_Rejections',
+                'Rejected_Amount','First_NCOV_Date','Last_NCOV_Date',#'NCOV_Duration_Days',
+                'Ever_Approved','Last_Approval_Date','Coverage_Status','Approved_Claims_Count','Approved_After_First_NCOV'
+                ] if c in new_drugs_ncov.columns]
+        
         display_ncov = new_drugs_ncov.copy()
         if 'Rejected_Amount' in display_ncov.columns:
             display_ncov['Rejected_Amount'] = display_ncov['Rejected_Amount'].round(0)
@@ -848,7 +847,7 @@ with tab5:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    
+
     # ── PAYMENT INTEGRITY (Keep existing section) ──────────────────────
     st.markdown('<div class="section-header">💵 Payment Integrity Anomalies</div>', unsafe_allow_html=True)
     st.caption('Financial data-integrity issues (rejected-but-paid, overpayments, etc.)')
@@ -875,7 +874,7 @@ with tab5:
 
     if any(payment_anomaly_summary[k] for k in ('rejected_paid_count', 'genuine_overpayment_count', 'zero_requested_count')):
         if payment_anomaly_summary['rejected_paid_count'] > 0:
-            with st.expander(f"🔴 Rejected-but-paid claims ({payment_anomaly_summary['rejected_paid_count']:,}) — should be $0 paid"):
+            with st.expander(f"🔴 Claims with both approved and rejected amounts ({payment_anomaly_summary['rejected_paid_count']:,}) — should be $0 paid"):
                 rp = payment_anomalies['rejected_paid']
                 cols = [c for c in ['DRUG_CODE', 'DRUG_NAME', 'DOC_LIC_NO', 'REJ_CODE_PREFIX',
                                     'TREAT_EST_AMT', 'TREAT_APPR_AMT', 'TREAT_REJ_AMT', 'SERVICE_DT']
@@ -884,7 +883,7 @@ with tab5:
                                hide_index=True)
 
         if payment_anomaly_summary['genuine_overpayment_count'] > 0:
-            with st.expander(f"🟠 Genuine overpayments — paid more than requested ({payment_anomaly_summary['genuine_overpayment_count']:,})"):
+            with st.expander(f"🟠 potential_overpayment - paid more than requested ({payment_anomaly_summary['genuine_overpayment_count']:,})"):
                 go = payment_anomalies['genuine_overpayment']
                 cols = [c for c in ['DRUG_CODE', 'DRUG_NAME', 'DOC_LIC_NO',
                                     'TREAT_EST_AMT', 'TREAT_APPR_AMT', 'Excess_Amt', 'SERVICE_DT']

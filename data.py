@@ -4,7 +4,7 @@ import pandas as pd
 import io
 import streamlit as st
 import time
-
+import numpy as np
 # ── REQUIRED & OPTIONAL COLUMNS ────────────────────────────────
 REQUIRED_COLUMNS = {
     'INS_TREAT_DESC', 'PBM_APPR_STS', 'PBM_REJ_CODE',
@@ -393,7 +393,7 @@ def compute_new_drugs_always_ncov(drug_df, full_df=None, min_claims=5):
 
     required_cols = ['SERVICE_DT', 'DRUG_CODE', 'IS_REJECTED', 'REJ_CODE_PREFIX']
     missing = [c for c in required_cols if c not in drug_df.columns]
-    
+
     if missing:
         return pd.DataFrame()
 
@@ -489,62 +489,191 @@ def compute_new_drugs_always_ncov(drug_df, full_df=None, min_claims=5):
         'NCOV_Count': 'NCOV_Rejections',
         'Amt': 'Rejected_Amount'
     })
+    # ── NCOV HISTORY + APPROVAL HISTORY (drug-diagnosis combo) ─────────────
 
-    # ── EVER APPROVED? (drug-diagnosis combo, full uploaded history) ───
+    always_ncov['First_NCOV_Date'] = pd.NaT
+    always_ncov['Last_NCOV_Date'] = pd.NaT
+    always_ncov['NCOV_Duration_Days'] = 0
+
     always_ncov['Ever_Approved'] = False
-    always_ncov['First_Approved_Date'] = pd.NaT
-    always_ncov['Last_Approved_Date'] = pd.NaT
+    always_ncov['Last_Approval_Date'] = pd.NaT
     always_ncov['Approved_Claims_Count'] = 0
+    always_ncov['Approved_After_First_NCOV'] = False
 
     has_full_history = (
         full_df is not None
         and 'DRUG_DIAG_COMBO' in full_df.columns
         and 'SERVICE_DT' in full_df.columns
         and 'IS_REJECTED' in full_df.columns
+        and 'REJ_CODE_PREFIX' in full_df.columns
         and 'DRUG_DIAG_COMBO' in current_month_drugs.columns
     )
 
     if has_full_history:
+
+        full_df = full_df.copy()
+        full_df['SERVICE_DT'] = pd.to_datetime(
+            full_df['SERVICE_DT'],
+            errors='coerce'
+        )
+
         flagged_drugs = set(always_ncov['DRUG_CODE'])
 
         flagged_combos = (
-            current_month_drugs[current_month_drugs['DRUG_CODE'].isin(flagged_drugs)]
-            [['DRUG_CODE', 'DRUG_DIAG_COMBO']]
+            current_month_drugs[
+                current_month_drugs['DRUG_CODE'].isin(flagged_drugs)
+            ][['DRUG_CODE', 'DRUG_DIAG_COMBO']]
             .drop_duplicates()
         )
 
-        approved_history = full_df[full_df['IS_REJECTED'] == 0][['DRUG_DIAG_COMBO', 'SERVICE_DT']].copy()
-        approved_history['SERVICE_DT'] = pd.to_datetime(approved_history['SERVICE_DT'], errors='coerce')
-        approved_history = approved_history.dropna(subset=['SERVICE_DT'])
+        # ---------------------------------------------------------
+        # NCOV HISTORY
+        # ---------------------------------------------------------
 
-        approval_summary = (
-            approved_history.groupby('DRUG_DIAG_COMBO')['SERVICE_DT']
-            .agg(First_Approved_Date='min', Last_Approved_Date='max', Approved_Claims_Count='count')
-            .reset_index()
-        )
+        ncov_history = full_df[
+            full_df['REJ_CODE_PREFIX']
+            .astype(str)
+            .str.upper()
+            .str.contains('NCOV', na=False)
+        ][['DRUG_DIAG_COMBO', 'SERVICE_DT']].copy()
 
-        combo_with_history = flagged_combos.merge(approval_summary, on='DRUG_DIAG_COMBO', how='left')
-        drug_level = (
-            combo_with_history.groupby('DRUG_CODE')
+        ncov_summary = (
+            ncov_history
+            .groupby('DRUG_DIAG_COMBO')['SERVICE_DT']
             .agg(
-                Ever_Approved=('Approved_Claims_Count', lambda s: s.notna().any()),
-                First_Approved_Date=('First_Approved_Date', 'min'),
-                Last_Approved_Date=('Last_Approved_Date', 'max'),
-                Approved_Claims_Count=('Approved_Claims_Count', 'sum'),
+                First_NCOV_Date='min',
+                Last_NCOV_Date='max'
             )
             .reset_index()
         )
-        drug_level['Approved_Claims_Count'] = drug_level['Approved_Claims_Count'].fillna(0).astype(int)
+
+        # ---------------------------------------------------------
+        # APPROVAL HISTORY
+        # ---------------------------------------------------------
+
+        approved_history = full_df[
+            full_df['IS_REJECTED'] == 0
+        ][['DRUG_DIAG_COMBO', 'SERVICE_DT']].copy()
+
+        approval_summary = (
+            approved_history
+            .groupby('DRUG_DIAG_COMBO')['SERVICE_DT']
+            .agg(
+                Last_Approval_Date='max',
+                Approved_Claims_Count='count'
+            )
+            .reset_index()
+        )
+
+        combo_history = (
+            flagged_combos
+            .merge(ncov_summary, on='DRUG_DIAG_COMBO', how='left')
+            .merge(approval_summary, on='DRUG_DIAG_COMBO', how='left')
+        )
+
+        # Was there an approval AFTER NCOV started?
+        combo_history['Approved_After_First_NCOV'] = (
+            combo_history['Last_Approval_Date']
+            > combo_history['First_NCOV_Date']
+        )
+
+        combo_history['NCOV_Duration_Days'] = (
+            combo_history['Last_NCOV_Date']
+            - combo_history['First_NCOV_Date']
+        ).dt.days
+
+        drug_level = (
+            combo_history.groupby('DRUG_CODE')
+            .agg(
+                First_NCOV_Date=('First_NCOV_Date', 'min'),
+                Last_NCOV_Date=('Last_NCOV_Date', 'max'),
+                NCOV_Duration_Days=('NCOV_Duration_Days', 'max'),
+
+                Ever_Approved=(
+                    'Approved_Claims_Count',
+                    lambda s: s.notna().any()
+                ),
+
+                Last_Approval_Date=('Last_Approval_Date', 'max'),
+
+                Approved_Claims_Count=(
+                    'Approved_Claims_Count',
+                    'sum'
+                ),
+
+                Approved_After_First_NCOV=(
+                    'Approved_After_First_NCOV',
+                    'any'
+                )
+            )
+            .reset_index()
+        )
+
+        drug_level['Approved_Claims_Count'] = (
+            drug_level['Approved_Claims_Count']
+            .fillna(0)
+            .astype(int)
+        )
 
         always_ncov = always_ncov.drop(
-            columns=['Ever_Approved', 'First_Approved_Date', 'Last_Approved_Date', 'Approved_Claims_Count']
-        ).merge(drug_level, on='DRUG_CODE', how='left')
+            columns=[
+                'First_NCOV_Date',
+                'Last_NCOV_Date',
+                'NCOV_Duration_Days',
+                'Ever_Approved',
+                'Last_Approval_Date',
+                'Approved_Claims_Count',
+                'Approved_After_First_NCOV'
+            ],
+            errors='ignore'
+        ).merge(
+            drug_level,
+            on='DRUG_CODE',
+            how='left'
+        )
 
-        always_ncov['Ever_Approved'] = always_ncov['Ever_Approved'].fillna(False)
-        always_ncov['Approved_Claims_Count'] = always_ncov['Approved_Claims_Count'].fillna(0).astype(int)
-        always_ncov['First_Approved_Date'] = always_ncov['First_Approved_Date'].dt.strftime('%Y-%m-%d')
-        always_ncov['Last_Approved_Date'] = always_ncov['Last_Approved_Date'].dt.strftime('%Y-%m-%d')
-        always_ncov = always_ncov.sort_values('NCOV_Rejections', ascending=False)
+        always_ncov['Ever_Approved'] = (
+            always_ncov['Ever_Approved']
+            .fillna(False)
+        )
+
+        always_ncov['Approved_After_First_NCOV'] = (
+            always_ncov['Approved_After_First_NCOV']
+            .fillna(False)
+        )
+
+        always_ncov['Approved_Claims_Count'] = (
+            always_ncov['Approved_Claims_Count']
+            .fillna(0)
+            .astype(int)
+        )
+
+        always_ncov['First_NCOV_Date'] = (
+            always_ncov['First_NCOV_Date']
+            .dt.strftime('%Y-%m-%d')
+        )
+
+        always_ncov['Last_NCOV_Date'] = (
+            always_ncov['Last_NCOV_Date']
+            .dt.strftime('%Y-%m-%d')
+        )
+
+        always_ncov['Last_Approval_Date'] = (
+            always_ncov['Last_Approval_Date']
+            .dt.strftime('%Y-%m-%d')
+        )
+
+        always_ncov = always_ncov.sort_values(
+            ['Ever_Approved', 'NCOV_Rejections'],
+            ascending=[False, False]
+        )
+
+        always_ncov['Coverage_Status'] = np.select(
+            [~always_ncov['Ever_Approved'],
+                pd.to_datetime(always_ncov['Last_Approval_Date'], errors='coerce')
+                < pd.to_datetime(always_ncov['First_NCOV_Date'], errors='coerce')],
+            ['Never Covered','Coverage Stopped'],default='Mixed History')
+        
 
     return always_ncov
 
@@ -639,6 +768,9 @@ def compute_payment_anomalies(drug_df):
     required = {'TREAT_APPR_AMT', 'TREAT_EST_AMT', 'IS_REJECTED'}
     if not required.issubset(drug_df.columns):
         return empty
+    
+    dru = drug_df['IS_REJECTED'].value_counts(dropna=False)
+
 
     df = drug_df.copy()
     df['TREAT_APPR_AMT'] = df['TREAT_APPR_AMT'].fillna(0)
