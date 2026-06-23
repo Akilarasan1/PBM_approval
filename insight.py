@@ -2,6 +2,39 @@ import pandas as pd
 import numpy as np
 from utils import CODE_DESC, THRESHOLDS
 
+
+def summarize_finding(row):
+    """
+    Convert one technical anomaly-finding row (from anomaly.run_emerging_pattern_scan)
+    into a single plain-English sentence — no sigma, no z-score, no "absolute delta"
+    jargon. Built for a stakeholder scanning Fraud & Safety who doesn't do statistics,
+    not for an analyst who already wants the raw Reason column in the ranked table.
+    """
+    entity = row.get('Entity', 'Unknown')
+    metric = str(row.get('Metric', '')).lower()
+    current = row.get('Current')
+    baseline = row.get('Baseline_Mean')
+    pct = row.get('Pct_Change')
+    novel = bool(row.get('Novel', False))
+
+    if novel and (baseline is None or pd.isna(baseline)):
+        current_txt = f"{current:,.0f}" if pd.notna(current) else "some"
+        return f"{entity} — never happened before. {current_txt} claim(s) this month."
+
+    if pd.notna(pct) and pd.notna(baseline) and pd.notna(current):
+        direction = "up" if pct >= 0 else "down"
+        return (
+            f"{entity} — {metric} went {direction} from {baseline:,.1f} to "
+            f"{current:,.1f} ({abs(pct):,.0f}% {direction})."
+        )
+
+    if pd.notna(current):
+        return f"{entity} — {metric} is {current:,.1f}, unusual compared to its own history."
+
+    return f"{entity} — flagged as unusual this month."
+
+
+
 def gen_insights(drug_df, rejected, code_stats, high_risk,
                   new_drugs_ncov=None, payment_anomaly_summary=None, emerging_findings=None):
     insights = []

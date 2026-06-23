@@ -4,7 +4,7 @@ import streamlit as st
 import pandas as pd
 import io
 from pathlib import Path
-from insight import gen_insights
+from insight import gen_insights, summarize_finding
 import time
 from utils import STREAMLIT_CSS, THRESHOLDS, SAMPLE_DATA_FILE
 
@@ -712,10 +712,10 @@ with tab5:
         
         st.dataframe(
             fraud_critical[display_cols].head(25),
-            # use_container_width=True,
             width = "stretch",
             hide_index=True
         )
+        st.caption("Need to dig into one specific finding — trend over time, full metrics? See the Emerging Patterns tab.")
         
         st.markdown("<br>", unsafe_allow_html=True)
 
@@ -735,14 +735,11 @@ with tab5:
             ].copy()
             
             if len(gender_diag) > 0:
-                for idx, row in gender_diag.head(10).iterrows():
-                    severity_icon = "🔴" if row['Severity'] == 'critical' else "🟡"
-                    st.markdown(f"""
-                    {severity_icon} **{row['Entity']}**
-                    - Metric: {row['Metric']}
-                    - Score: {row['Anomaly_Score']:.0f}/100
-                    - {row['Reason'][:100]}...
-                    """)
+                for _, row in gender_diag.head(10).iterrows():
+                    st.markdown(
+                        f"<div class='insight-card {row['Severity']}'>{summarize_finding(row)}</div>",
+                        unsafe_allow_html=True,
+                    )
             else:
                 st.info("No gender-diagnosis anomalies detected.")
         
@@ -759,14 +756,11 @@ with tab5:
             ].copy()
             
             if len(age_drug) > 0:
-                for idx, row in age_drug.head(10).iterrows():
-                    severity_icon = "🔴" if row['Severity'] == 'critical' else "🟡"
-                    st.markdown(f"""
-                    {severity_icon} **{row['Entity']}**
-                    - Metric: {row['Metric']}
-                    - Score: {row['Anomaly_Score']:.0f}/100
-                    - {row['Reason'][:100]}...
-                    """)
+                for _, row in age_drug.head(10).iterrows():
+                    st.markdown(
+                        f"<div class='insight-card {row['Severity']}'>{summarize_finding(row)}</div>",
+                        unsafe_allow_html=True,
+                    )
             else:
                 st.info("No age-drug anomalies detected.")
 
@@ -788,15 +782,11 @@ with tab5:
             ].copy()
             
             if len(new_diag) > 0:
-                for idx, row in new_diag.head(10).iterrows():
-                    severity_icon = "🔴" if row['Severity'] == 'critical' else "🟡"
-                    pct_change = f"{row['Pct_Change']}%" if pd.notna(row['Pct_Change']) else "N/A"
-                    st.markdown(f"""
-                    {severity_icon} **{row['Entity']}**
-                    - Change: {pct_change}%
-                    - Score: {row['Anomaly_Score']:.0f}/100
-                    - {row['Reason'][:100]}...
-                    """)
+                for _, row in new_diag.head(10).iterrows():
+                    st.markdown(
+                        f"<div class='insight-card {row['Severity']}'>{summarize_finding(row)}</div>",
+                        unsafe_allow_html=True,
+                    )
             else:
                 st.info("No diagnosis spikes detected.")
         
@@ -813,85 +803,52 @@ with tab5:
             ].copy()
             
             if len(prov_behavior) > 0:
-                for idx, row in prov_behavior.head(10).iterrows():
-                    severity_icon = "🔴" if row['Severity'] == 'critical' else "🟡"
-                    pct_change_display = f"{row['Pct_Change']:+.0f}%" if pd.notna(row['Pct_Change']) else "N/A"
-
-
-                    st.markdown(f"""
-                    {severity_icon} **{row['Entity']}**
-                    - Metric: {row['Metric']}
-                    - Change: {pct_change_display}
-                    - Score: {row['Anomaly_Score']:.0f}/100
-                    - {row['Reason'][:100]}...
-                    """)
+                for _, row in prov_behavior.head(10).iterrows():
+                    st.markdown(
+                        f"<div class='insight-card {row['Severity']}'>{summarize_finding(row)}</div>",
+                        unsafe_allow_html=True,
+                    )
             else:
                 st.info("No provider behavior changes detected.")
-
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        # Section 4: Drill-Down Investigation
-        st.markdown(
-            '<div class="section-header">🔍 Drill-Down Investigation</div>',
-            unsafe_allow_html=True
-        )
-        
-        findings_list = (fraud_critical['Entity'].astype(str) + ' — ' + 
-                        fraud_critical['Dimension'].astype(str)).tolist()
-        
-        if findings_list:
-            selected_finding = st.selectbox(
-                'Select a finding to investigate:',
-                findings_list,
-                key='fraud_finding_selector'
-            )
-            
-            if selected_finding:
-                finding_idx = findings_list.index(selected_finding)
-                finding_row = fraud_critical.iloc[finding_idx]
-                
-                st.markdown(f"### {finding_row['Entity']} — {finding_row['Dimension']}")
-                
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    st.metric(
-                        "Anomaly Score",
-                        f"{finding_row['Anomaly_Score']:.0f}/100",
-                        delta=f"{finding_row['Pct_Change']:+.0f}%" if pd.notna(finding_row['Pct_Change']) else None
-                    )
-                
-                with col2:
-                    st.metric(
-                        "Severity",
-                        finding_row['Severity'].upper(),
-                        delta=f"Z-Score: {finding_row['ZScore']:.1f}" if pd.notna(finding_row['ZScore']) else None
-                    )
-                
-                with col3:
-                    st.metric(
-                        "Baseline Months",
-                        finding_row['Baseline_Months'],
-                        delta="Novel" if finding_row['Novel'] else "Historical"
-                    )
-                
-                st.markdown(f"""
-                **Investigation Details:**
-                
-                {finding_row['Reason']}
-                
-                **Metrics:**
-                - Current Value: {finding_row['Current']:.2f}
-                - Baseline Average: {finding_row['Baseline_Mean']:.2f}
-                - Percent Change: {finding_row['Pct_Change']:.1f}% (if available)
-                - Z-Score: {finding_row['ZScore']:.2f} (if available)
-                """)
 
     else:
         st.success('✅ No critical or warning patterns detected this month.')
 
     st.markdown("<br>", unsafe_allow_html=True)
 
+    # ── NEW DRUGS WITH 100% NOT-COVERED REJECTION ───────────────────────
+    st.markdown('<div class="section-header">💊 New Drugs with 100% Not-Covered Rejection</div>', unsafe_allow_html=True)
+    st.caption('Drugs 100% rejected as NCOV this month. "Ever Approved" flags ones that WERE approved before '
+               'for the same diagnosis — a formulary drop or coding bug, not a genuinely new/never-covered drug.')
+
+    if not new_drugs_ncov.empty:
+        st.markdown(f"""<div class="insight-card warning">
+            🚫 <b>{len(new_drugs_ncov)} drug code(s) with 100% NCOV rejection</b> this month.
+        </div>""", unsafe_allow_html=True)
+
+        if 'Ever_Approved' in new_drugs_ncov.columns:
+            was_approved = new_drugs_ncov[new_drugs_ncov['Ever_Approved']]
+            if len(was_approved) > 0:
+                st.markdown(f"""<div class="insight-card critical">
+                    ⚠️ <b>{len(was_approved)} of these were APPROVED before</b> for the same drug-diagnosis
+                    combination — prioritize these first.
+                </div>""", unsafe_allow_html=True)
+
+        show_ncov_cols = [c for c in [
+            'DRUG_CODE', 'DRUG_NAME', 'Total_Claims', 'Rejected_Claims', 'NCOV_Rejections',
+            'RejRate_%', 'Rejected_Amount', 'Ever_Approved', 'First_Approved_Date',
+            'Last_Approved_Date', 'Approved_Claims_Count',
+        ] if c in new_drugs_ncov.columns]
+        display_ncov = new_drugs_ncov.copy()
+        if 'Rejected_Amount' in display_ncov.columns:
+            display_ncov['Rejected_Amount'] = display_ncov['Rejected_Amount'].round(0)
+        st.dataframe(display_ncov[show_ncov_cols].head(20), width="stretch", hide_index=True)
+    else:
+        st.success('No new drugs with 100% NCOV rejection found this month.')
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    
     # ── PAYMENT INTEGRITY (Keep existing section) ──────────────────────
     st.markdown('<div class="section-header">💵 Payment Integrity Anomalies</div>', unsafe_allow_html=True)
     st.caption('Financial data-integrity issues (rejected-but-paid, overpayments, etc.)')
