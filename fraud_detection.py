@@ -117,6 +117,8 @@ def extract_fraud_spikes(emerging_findings: pd.DataFrame) -> pd.DataFrame:
     findings["Fraud_Score"] = findings.apply(_compute_fraud_score, axis=1)
     findings["Fraud_Severity"] = findings["Fraud_Score"].apply(_fraud_severity)
     findings["Signal_Type"] = findings.apply(_classify_signal_type, axis=1)
+    findings["Pct_Change_Percentile"] = findings["Pct_Change"].abs().rank(pct=True) * 100
+    findings["Fraud_Score"] = findings.apply(_compute_fraud_score, axis=1)
     
     # Rank by fraud score
     findings = findings.sort_values("Fraud_Score", ascending=False).reset_index(drop=True)
@@ -321,6 +323,29 @@ def _categorize_spike(pct_change) -> str:
         return "Moderate (100-200%)"
     else:
         return "Normal (<100%)"
+    
+
+def _compute_fraud_score(row):
+    base_score = float(row["Anomaly_Score"]) if pd.notna(row["Anomaly_Score"]) else 0
+    percentile = float(row["Pct_Change_Percentile"]) if pd.notna(row["Pct_Change_Percentile"]) else 0
+    is_novel = bool(row["Novel"]) if pd.notna(row["Novel"]) else False
+    current_val = float(row["Current"]) if pd.notna(row["Current"]) else 0
+
+    fraud_boost = 0
+    if percentile >= 95:
+        fraud_boost += FRAUD_THRESHOLDS["spike_p95"]   # was spike_500pct (80)
+    elif percentile >= 85:
+        fraud_boost += FRAUD_THRESHOLDS["spike_p85"]   # was spike_200pct (50)
+    elif percentile >= 70:
+        fraud_boost += FRAUD_THRESHOLDS["spike_p70"]   # was spike_100pct (25)
+
+    if is_novel:
+        fraud_boost += 20
+    if current_val > 100:
+        fraud_boost += min(15, current_val / 100)
+
+    return round(min(base_score + fraud_boost, 100), 1)
+
 
 
 # ── INVESTIGATION QUEUE PRIORITIZATION ──────────────────────────

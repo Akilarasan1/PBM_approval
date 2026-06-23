@@ -74,6 +74,14 @@ KEY_COLUMNS = (
 )
 
 
+def _concentration_table(drug_df):
+    pc = drug_df.groupby(["DRUG_CODE", "DOC_LIC_NO"]).size().reset_index(name="Claims")
+    pc["Share"] = pc["Claims"] / pc.groupby("DRUG_CODE")["Claims"].transform("sum")
+    top_idx = pc.groupby("DRUG_CODE")["Share"].idxmax()
+    return pc.loc[top_idx, ["DRUG_CODE", "DOC_LIC_NO", "Share"]].rename(
+        columns={"DOC_LIC_NO": "Top_Provider", "Share": "Top_Provider_Share"})
+
+
 def build_snapshot(drug_df):
     """Aggregate a full claims dataframe into small per-dimension summaries.
 
@@ -142,10 +150,20 @@ def build_snapshot(drug_df):
         )
 
     if "DRUG_DIAG_COMBO" in drug_df.columns:
-        snap["combo_stats"] = (
-            drug_df.assign(DRUG_DIAG_COMBO=drug_df["DRUG_DIAG_COMBO"].astype(str))
-            .groupby("DRUG_DIAG_COMBO").size().reset_index(name="Claims")
-        )
+        snap["combo_stats"] = (drug_df.assign(DRUG_DIAG_COMBO=drug_df["DRUG_DIAG_COMBO"].astype(str)).groupby("DRUG_DIAG_COMBO").size().reset_index(name="Claims"))
+
+
+    if {"DOC_LIC_NO", "DRUG_CODE"}.issubset(drug_df.columns):
+        snap["provider_drug_stats"] = drug_df.groupby(["DOC_LIC_NO", "DRUG_CODE"]).size().reset_index(name="Claims")
+
+    if {"PA_PRIMARY_DIAG", "DOC_LIC_NO"}.issubset(drug_df.columns):
+        snap["diag_provider_stats"] = drug_df.groupby(["PA_PRIMARY_DIAG", "DOC_LIC_NO"]).size().reset_index(name="Claims")
+
+    if {"MEM_GENDER", "DRUG_CODE"}.issubset(drug_df.columns):
+        snap["gender_drug_stats"] = drug_df.groupby(["MEM_GENDER", "DRUG_CODE"]).size().reset_index(name="Claims")
+
+    if {"DRUG_CODE", "DOC_LIC_NO"}.issubset(drug_df.columns):
+        snap["drug_concentration_stats"] = _concentration_table(drug_df)
 
     return snap
 

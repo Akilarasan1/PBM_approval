@@ -5,7 +5,7 @@ import pandas as pd
 import io
 from pathlib import Path
 from insight import gen_insights
-
+import time
 from utils import STREAMLIT_CSS, THRESHOLDS, SAMPLE_DATA_FILE
 
 from data import (
@@ -75,8 +75,10 @@ with st.sidebar:
 
     if file_bytes and filename:
         try:
+            t1 = time.perf_counter()
+            print("fileed entered intto system",t1)
             drug_df_full_raw = process(file_bytes, filename)
-
+            print(f' time taking to file load :: {(time.perf_counter() - t1) / 60:.2f} minutes')
             missing_required, missing_optional = validate_columns(drug_df_full_raw)
             if missing_optional:
                 with st.sidebar.expander("⚠️ Missing Optional Features"):
@@ -710,7 +712,8 @@ with tab5:
         
         st.dataframe(
             fraud_critical[display_cols].head(25),
-            use_container_width=True,
+            # use_container_width=True,
+            width = "stretch",
             hide_index=True
         )
         
@@ -787,10 +790,10 @@ with tab5:
             if len(new_diag) > 0:
                 for idx, row in new_diag.head(10).iterrows():
                     severity_icon = "🔴" if row['Severity'] == 'critical' else "🟡"
-                    pct_change = row['Pct_Change'] if pd.notna(row['Pct_Change']) else 'N/A'
+                    pct_change = f"{row['Pct_Change']}%" if pd.notna(row['Pct_Change']) else "N/A"
                     st.markdown(f"""
                     {severity_icon} **{row['Entity']}**
-                    - Change: {pct_change:+.0f}%
+                    - Change: {pct_change}%
                     - Score: {row['Anomaly_Score']:.0f}/100
                     - {row['Reason'][:100]}...
                     """)
@@ -812,11 +815,13 @@ with tab5:
             if len(prov_behavior) > 0:
                 for idx, row in prov_behavior.head(10).iterrows():
                     severity_icon = "🔴" if row['Severity'] == 'critical' else "🟡"
-                    pct_change = row['Pct_Change'] if pd.notna(row['Pct_Change']) else 'N/A'
+                    pct_change_display = f"{row['Pct_Change']:+.0f}%" if pd.notna(row['Pct_Change']) else "N/A"
+
+
                     st.markdown(f"""
                     {severity_icon} **{row['Entity']}**
                     - Metric: {row['Metric']}
-                    - Change: {pct_change:+.0f}%
+                    - Change: {pct_change_display}
                     - Score: {row['Anomaly_Score']:.0f}/100
                     - {row['Reason'][:100]}...
                     """)
@@ -918,8 +923,8 @@ with tab5:
                 cols = [c for c in ['DRUG_CODE', 'DRUG_NAME', 'DOC_LIC_NO', 'REJ_CODE_PREFIX',
                                     'TREAT_EST_AMT', 'TREAT_APPR_AMT', 'TREAT_REJ_AMT', 'SERVICE_DT']
                         if c in rp.columns]
-                st.dataframe(rp[cols].sort_values('TREAT_APPR_AMT', ascending=False),
-                             use_container_width=True, hide_index=True)
+                st.dataframe(rp[cols].sort_values('TREAT_APPR_AMT', ascending=False), width = "stretch",
+                               hide_index=True)
 
         if payment_anomaly_summary['genuine_overpayment_count'] > 0:
             with st.expander(f"🟠 Genuine overpayments — paid more than requested ({payment_anomaly_summary['genuine_overpayment_count']:,})"):
@@ -928,7 +933,7 @@ with tab5:
                                     'TREAT_EST_AMT', 'TREAT_APPR_AMT', 'Excess_Amt', 'SERVICE_DT']
                         if c in go.columns]
                 st.dataframe(go[cols].sort_values('Excess_Amt', ascending=False),
-                             use_container_width=True, hide_index=True)
+                            width = "stretch" ,hide_index=True)
 
         if payment_anomaly_summary['zero_requested_count'] > 0:
             with st.expander(f"🔵 Paid with $0 requested — likely missing source value ({payment_anomaly_summary['zero_requested_count']:,})"):
@@ -937,7 +942,7 @@ with tab5:
                                     'TREAT_EST_AMT', 'TREAT_APPR_AMT', 'SERVICE_DT']
                         if c in zr.columns]
                 st.dataframe(zr[cols].sort_values('TREAT_APPR_AMT', ascending=False),
-                             use_container_width=True, hide_index=True)
+                            width = "stretch", hide_index=True)
     else:
         st.success('No payment integrity anomalies found this month.')
 
@@ -1058,8 +1063,7 @@ with tab6:
         available_cols = [c for c in display_cols if c in show.columns]
 
         st.dataframe(
-            show[available_cols].head(100),
-            use_container_width=True,
+            show[available_cols].head(100),width = "stretch", 
             hide_index=True,
         )
 

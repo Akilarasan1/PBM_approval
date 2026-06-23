@@ -3,7 +3,7 @@
 import pandas as pd
 import io
 import streamlit as st
-
+import time
 
 # ── REQUIRED & OPTIONAL COLUMNS ────────────────────────────────
 REQUIRED_COLUMNS = {
@@ -43,17 +43,18 @@ def process(file_bytes, filename):
         Processed DataFrame with derived columns for analysis
     """
     # Load file
+    t = time.perf_counter()
     if filename.endswith('.csv'):
         # Read with low_memory=False to avoid mixed-type dtype warnings
         df = pd.read_csv(io.BytesIO(file_bytes), low_memory=False)
     else:
         df = pd.read_excel(io.BytesIO(file_bytes))
 
-    # Validate required columns
     missing_required, missing_optional = validate_columns(df)
     if missing_required:
         raise ValueError(f"Missing required columns: {missing_required}")
-    
+
+
     # Filter to prescribed drugs only
     if 'INS_TREAT_DESC' in df.columns:
         drug_df = df[df['INS_TREAT_DESC'] == 'Prescribed Drugs'].copy()
