@@ -12,7 +12,7 @@ from data import (
     process, compute_code_stats, compute_drug_diag_combos, compute_provider_stats,
     compute_weekly_trends, compute_new_drugs_always_ncov, compute_provider_investigation,
     compute_provider_detail, enrich_combo_display, validate_columns,
-    compute_payment_anomalies, summarize_payment_anomalies,
+    compute_payment_anomalies, summarize_payment_anomalies,compute_new_entities_appearing
 )
 
 from viz import (
@@ -289,7 +289,7 @@ weekly_trends = compute_weekly_trends(drug_df_full)
 provider_investigation = compute_provider_investigation(drug_df)
 # new_drugs_ncov = compute_new_drugs_always_ncov(drug_df, min_claims=THRESHOLDS['new_drug_ncov_min_claims'])
 
-
+new_entities = compute_new_entities_appearing(drug_df,historical_snapshots)
 payment_anomalies = compute_payment_anomalies(drug_df)
 payment_anomaly_summary = summarize_payment_anomalies(payment_anomalies)
 
@@ -314,9 +314,9 @@ total_rej_amt = rejected['TREAT_REJ_AMT'].sum() if 'TREAT_REJ_AMT' in rejected.c
 total_est_amt = drug_df['TREAT_EST_AMT'].sum() if 'TREAT_EST_AMT' in drug_df.columns else 0
 
 # ── TABS ───────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📊 Overview", "💰 Financial", "🔍 Combos", "👨‍⚕️ Providers", "🚨 Fraud & Safety",
-    "🧬 Emerging Patterns",
+    # "🧬 Emerging Patterns",
 ])
 
 # ════════════════════════════════════════════════════
@@ -634,10 +634,8 @@ with tab5:
         'Rejection Code Drift', # Rejection reason pattern changes
     ]
     
-    fraud_critical = fraud_findings[
-        (fraud_findings['Dimension'].isin(fraud_relevant_dimensions)) &
-        (fraud_findings['Severity'].isin(['critical', 'warning']))
-    ].copy()
+    fraud_critical = fraud_findings[(fraud_findings['Dimension'].isin(fraud_relevant_dimensions)) 
+                                    & (fraud_findings['Severity'].isin(['critical', 'warning']))].copy()
 
     # ── KPI SUMMARY ──────────────────────────────────────────────────
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
@@ -674,6 +672,7 @@ with tab5:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
+    current_month_label = None
     # ── BASELINE STATUS ──────────────────────────────────────────────
     if len(baseline_months_used) == 0:
         st.info(
@@ -705,7 +704,8 @@ with tab5:
         
         display_cols = [
             'Rank', 'Dimension', 'Entity', 'Metric', 'Current', 'Baseline_Mean',
-            'Pct_Change', 'ZScore', 'Anomaly_Score', 'Severity', 'Reason'
+            # 'Pct_Change', 'ZScore',
+              'Anomaly_Score', 'Severity', 'Reason'
         ]
         
         st.dataframe(
@@ -765,49 +765,73 @@ with tab5:
         st.markdown("<br>", unsafe_allow_html=True)
 
         # Section 3: New Patterns & Volume Spikes
-        col_c, col_d = st.columns(2)
+        # col_c, col_d = st.columns(2)
         
-        # ── NEW DIAGNOSIS SPIKES (COVID-style) ────────────────────────
-        with col_c:
-            st.markdown(
-                '<div class="section-header">📊 New Diagnosis Spikes</div>',
-                unsafe_allow_html=True
-            )
-            st.caption('Brand-new diagnoses appearing (like COVID-19 in 2020)')
-            
-            new_diag = fraud_critical[
-                fraud_critical['Dimension'] == 'Diagnosis Drift'
-            ].copy()
-            
-            if len(new_diag) > 0:
-                for _, row in new_diag.head(10).iterrows():
-                    st.markdown(
-                        f"<div class='insight-card {row['Severity']}'>{summarize_finding(row)}</div>",
-                        unsafe_allow_html=True,
-                    )
-            else:
-                st.info("No diagnosis spikes detected.")
+        # ── NEW DIAGNOSIS SPIKES (COVID-style) ──────────────────────── replaced
+        # ── NEW ENTITIES APPEARING ────────────────────────────────────
+        # with col_c:
+
+        st.markdown( '<div class="section-header">🆕 New Entities Appearing</div>',unsafe_allow_html=True)
+        st.caption('New drugs, diagnoses, providers and drug-diagnosis combinations ' 'never seen in prior uploaded months.')
+        total_new = sum(len(v) for v in new_entities.values())
+        print(">>>> ",new_entities.keys())
+        if total_new > 0:
+            st.success(f"{total_new:,} new entities detected")
+
+            if 'diagnoses' in new_entities:
+                st.write(f"**New Diagnoses:** {len(new_entities['diagnoses'])}")
+
+            if 'drugs' in new_entities:
+                st.write(f"**New Drugs:** {len(new_entities['drugs'])}")
+
+            if 'providers' in new_entities:
+                st.write(f"**New Providers:** {len(new_entities['providers'])}")
+
+            if 'combos' in new_entities:
+                st.write(f"**New Drug-Diagnosis Combos:** {len(new_entities['combos'])}")
+
+        else:
+            st.info("No new entities detected.")
+
+
+        if new_entities:
+            with st.expander("🆕 New Drugs"):
+                if 'drugs' in new_entities:
+                    st.dataframe(new_entities['drugs'].head(20),width="stretch",hide_index=True)
+
+            with st.expander("🩺 New Diagnoses"):
+                if 'diagnoses' in new_entities:
+                    st.dataframe(new_entities['diagnoses'].head(20),width="stretch",hide_index=True)
+
+            with st.expander("🏥 New Providers"):
+                if 'providers' in new_entities:
+                    st.dataframe(new_entities['providers'].head(20),width="stretch",hide_index=True)
+
+            with st.expander("💊🩺 New Drug-Diagnosis Combos"):
+                if 'combos' in new_entities:
+                    st.dataframe( new_entities['combos'].head(20),width="stretch",hide_index=True)
         
-        # ── PROVIDER BEHAVIOR CHANGES ──────────────────────────────────
-        with col_d:
-            st.markdown(
-                '<div class="section-header">🏥 Provider Behavior Changes</div>',
-                unsafe_allow_html=True
-            )
-            st.caption('Provider rejection rates or volumes changing dramatically')
+        
+        # # ── PROVIDER BEHAVIOR CHANGES ──────────────────────────────────
+        # with col_d:
+        #     st.markdown(
+        #         '<div class="section-header">🏥 Provider Behavior Changes</div>',
+        #         unsafe_allow_html=True
+        #     )
+        #     st.caption('Provider rejection rates or volumes changing dramatically')
             
-            prov_behavior = fraud_critical[
-                fraud_critical['Dimension'] == 'Provider Behavior'
-            ].copy()
+        #     prov_behavior = fraud_critical[
+        #         fraud_critical['Dimension'] == 'Provider Behavior'
+        #     ].copy()
             
-            if len(prov_behavior) > 0:
-                for _, row in prov_behavior.head(10).iterrows():
-                    st.markdown(
-                        f"<div class='insight-card {row['Severity']}'>{summarize_finding(row)}</div>",
-                        unsafe_allow_html=True,
-                    )
-            else:
-                st.info("No provider behavior changes detected.")
+        #     if len(prov_behavior) > 0:
+        #         for _, row in prov_behavior.head(10).iterrows():
+        #             st.markdown(
+        #                 f"<div class='insight-card {row['Severity']}'>{summarize_finding(row)}</div>",
+        #                 unsafe_allow_html=True,
+        #             )
+        #     else:
+        #         st.info("No provider behavior changes detected.")
 
     else:
         st.success('✅ No critical or warning patterns detected this month.')
@@ -908,161 +932,161 @@ with tab5:
 # ════════════════════════════════════════════════════
 # TAB 6 — EMERGING PATTERNS (statistical discovery, no hardcoded rules)
 # ════════════════════════════════════════════════════
-with tab6:
-    if not enable_patterns:
-        st.info("🔌 Pattern Detection is turned off. Enable it in the sidebar (Emerging Patterns section) to use this tab.")
+# with tab6:
+#     if not enable_patterns:
+#         st.info("🔌 Pattern Detection is turned off. Enable it in the sidebar (Emerging Patterns section) to use this tab.")
 
-    if is_overall:
-        st.info(
-            f"📊 You're viewing **Overall**. Drift/novelty detection always compares one "
-            f"specific month against its trailing baseline, so this tab is analyzing the "
-            f"most recent month in your upload: **{emerging_month_label}**. Pick that month "
-            f"directly in the Period selector if you want to drill into a different one."
-        )
-    st.markdown('<div class="section-header">Baseline Status</div>', unsafe_allow_html=True)
-    n_baseline = len(baseline_months_used)
+#     if is_overall:
+#         st.info(
+#             f"📊 You're viewing **Overall**. Drift/novelty detection always compares one "
+#             f"specific month against its trailing baseline, so this tab is analyzing the "
+#             f"most recent month in your upload: **{emerging_month_label}**. Pick that month "
+#             f"directly in the Period selector if you want to drill into a different one."
+#         )
+#     st.markdown('<div class="section-header">Baseline Status</div>', unsafe_allow_html=True)
+#     n_baseline = len(baseline_months_used)
 
-    if n_baseline == 0:
-        st.info(
-            f"📅 **{emerging_month_label}** is the first month on record — there's no baseline yet. "
-            "Month-over-month drift (z-scores, % change, new-combination novelty) will activate "
-            "automatically once at least one more month has been uploaded or seeded. "
-            "What you see below is same-month outlier detection: providers, drugs, and "
-            "diagnoses that already look unusual *relative to their peers this month*."
-        )
-    elif n_baseline < anomaly.MIN_BASELINE_MONTHS:
-        st.warning(
-            f"📅 Baseline currently has **{n_baseline} month** ({', '.join(baseline_months_used)}). "
-            f"Z-score drift needs {anomaly.MIN_BASELINE_MONTHS}+ months to compute a meaningful "
-            "standard deviation, so percent-change and novelty findings are active, but z-score-based "
-            "findings are limited. Upload or seed one more historical month to unlock full drift detection."
-        )
-    else:
-        st.success(
-            f"📅 Comparing **{emerging_month_label}** against a **{n_baseline}-month** baseline: "
-            f"{', '.join(baseline_months_used)}."
-        )
+#     if n_baseline == 0:
+#         st.info(
+#             f"📅 **{emerging_month_label}** is the first month on record — there's no baseline yet. "
+#             "Month-over-month drift (z-scores, % change, new-combination novelty) will activate "
+#             "automatically once at least one more month has been uploaded or seeded. "
+#             "What you see below is same-month outlier detection: providers, drugs, and "
+#             "diagnoses that already look unusual *relative to their peers this month*."
+#         )
+#     elif n_baseline < anomaly.MIN_BASELINE_MONTHS:
+#         st.warning(
+#             f"📅 Baseline currently has **{n_baseline} month** ({', '.join(baseline_months_used)}). "
+#             f"Z-score drift needs {anomaly.MIN_BASELINE_MONTHS}+ months to compute a meaningful "
+#             "standard deviation, so percent-change and novelty findings are active, but z-score-based "
+#             "findings are limited. Upload or seed one more historical month to unlock full drift detection."
+#         )
+#     else:
+#         st.success(
+#             f"📅 Comparing **{emerging_month_label}** against a **{n_baseline}-month** baseline: "
+#             f"{', '.join(baseline_months_used)}."
+#         )
 
-    emerging_findings = anomaly.run_emerging_pattern_scan(
-        current_snapshot, historical_snapshots, drug_df=drug_df
-    )
-    summary = anomaly.summarize_scan(emerging_findings)
+#     emerging_findings = anomaly.run_emerging_pattern_scan(
+#         current_snapshot, historical_snapshots, drug_df=drug_df
+#     )
+#     summary = anomaly.summarize_scan(emerging_findings)
 
-    e1, e2, e3, e4 = st.columns(4)
-    with e1:
-        st.markdown(f"""<div class="metric-card blue">
-            <div class="metric-label">Total Findings</div>
-            <div class="metric-value">{summary['total']:,}</div>
-            <div class="metric-sub">across all dimensions</div>
-        </div>""", unsafe_allow_html=True)
-    with e2:
-        st.markdown(f"""<div class="metric-card red">
-            <div class="metric-label">Critical</div>
-            <div class="metric-value">{summary['critical']:,}</div>
-            <div class="metric-sub">investigate first</div>
-        </div>""", unsafe_allow_html=True)
-    with e3:
-        st.markdown(f"""<div class="metric-card amber">
-            <div class="metric-label">Warning</div>
-            <div class="metric-value">{summary['warning']:,}</div>
-            <div class="metric-sub">monitor closely</div>
-        </div>""", unsafe_allow_html=True)
-    with e4:
-        st.markdown(f"""<div class="metric-card purple">
-            <div class="metric-label">Never-Seen-Before</div>
-            <div class="metric-value">{summary['novel']:,}</div>
-            <div class="metric-sub">no historical precedent</div>
-        </div>""", unsafe_allow_html=True)
+#     e1, e2, e3, e4 = st.columns(4)
+#     with e1:
+#         st.markdown(f"""<div class="metric-card blue">
+#             <div class="metric-label">Total Findings</div>
+#             <div class="metric-value">{summary['total']:,}</div>
+#             <div class="metric-sub">across all dimensions</div>
+#         </div>""", unsafe_allow_html=True)
+#     with e2:
+#         st.markdown(f"""<div class="metric-card red">
+#             <div class="metric-label">Critical</div>
+#             <div class="metric-value">{summary['critical']:,}</div>
+#             <div class="metric-sub">investigate first</div>
+#         </div>""", unsafe_allow_html=True)
+#     with e3:
+#         st.markdown(f"""<div class="metric-card amber">
+#             <div class="metric-label">Warning</div>
+#             <div class="metric-value">{summary['warning']:,}</div>
+#             <div class="metric-sub">monitor closely</div>
+#         </div>""", unsafe_allow_html=True)
+#     with e4:
+#         st.markdown(f"""<div class="metric-card purple">
+#             <div class="metric-label">Never-Seen-Before</div>
+#             <div class="metric-value">{summary['novel']:,}</div>
+#             <div class="metric-sub">no historical precedent</div>
+#         </div>""", unsafe_allow_html=True)
 
-    st.markdown("<br>", unsafe_allow_html=True)
+#     st.markdown("<br>", unsafe_allow_html=True)
 
-    if emerging_findings.empty:
-        st.success("No statistically significant emerging patterns this month.")
-    else:
-        c1, c2 = st.columns([1.3, 1])
-        with c1:
-            st.markdown('<div class="section-header">All Findings (ranked by severity)</div>', unsafe_allow_html=True)
-            fig = plot_anomaly_scatter(emerging_findings)
-            if fig:
-                st.plotly_chart(fig, width="stretch")
-        with c2:
-            st.markdown('<div class="section-header">Findings by Dimension</div>', unsafe_allow_html=True)
-            fig = plot_findings_by_dimension(emerging_findings)
-            if fig:
-                st.plotly_chart(fig, width="stretch")
+#     if emerging_findings.empty:
+#         st.success("No statistically significant emerging patterns this month.")
+#     else:
+#         c1, c2 = st.columns([1.3, 1])
+#         with c1:
+#             st.markdown('<div class="section-header">All Findings (ranked by severity)</div>', unsafe_allow_html=True)
+#             fig = plot_anomaly_scatter(emerging_findings)
+#             if fig:
+#                 st.plotly_chart(fig, width="stretch")
+#         with c2:
+#             st.markdown('<div class="section-header">Findings by Dimension</div>', unsafe_allow_html=True)
+#             fig = plot_findings_by_dimension(emerging_findings)
+#             if fig:
+#                 st.plotly_chart(fig, width="stretch")
 
-        st.markdown('<div class="section-header">Investigation Queue</div>', unsafe_allow_html=True)
-        fcol1, fcol2 = st.columns(2)
-        with fcol1:
-            dim_filter = st.multiselect(
-                'Filter by dimension', sorted(emerging_findings['Dimension'].unique()),
-                default=[],
-            )
-        with fcol2:
-            sev_filter = st.multiselect(
-                'Filter by severity', ['critical', 'warning', 'info'], default=[],
-            )
+#         st.markdown('<div class="section-header">Investigation Queue</div>', unsafe_allow_html=True)
+#         fcol1, fcol2 = st.columns(2)
+#         with fcol1:
+#             dim_filter = st.multiselect(
+#                 'Filter by dimension', sorted(emerging_findings['Dimension'].unique()),
+#                 default=[],
+#             )
+#         with fcol2:
+#             sev_filter = st.multiselect(
+#                 'Filter by severity', ['critical', 'warning', 'info'], default=[],
+#             )
 
-        show = emerging_findings.copy()
-        if dim_filter:
-            show = show[show['Dimension'].isin(dim_filter)]
-        if sev_filter:
-            show = show[show['Severity'].isin(sev_filter)]
+#         show = emerging_findings.copy()
+#         if dim_filter:
+#             show = show[show['Dimension'].isin(dim_filter)]
+#         if sev_filter:
+#             show = show[show['Severity'].isin(sev_filter)]
 
-        display_cols = ['Rank', 'Severity', 'Dimension', 'Entity', 'Metric', 'Current',
-                         'Baseline_Mean', 'Pct_Change', 'ZScore', 'Novel', 'Anomaly_Score', 'Reason']
-        # st.dataframe(
-        #     show[display_cols].head(100),
-        #     width="stretch", hide_index=True,
-        # )
+#         display_cols = ['Rank', 'Severity', 'Dimension', 'Entity', 'Metric', 'Current',
+#                          'Baseline_Mean', 'Pct_Change', 'ZScore', 'Novel', 'Anomaly_Score', 'Reason']
+#         # st.dataframe(
+#         #     show[display_cols].head(100),
+#         #     width="stretch", hide_index=True,
+#         # )
 
-        available_cols = [c for c in display_cols if c in show.columns]
+#         available_cols = [c for c in display_cols if c in show.columns]
 
-        st.dataframe(
-            show[available_cols].head(100),width = "stretch", 
-            hide_index=True,
-        )
+#         st.dataframe(
+#             show[available_cols].head(100),width = "stretch", 
+#             hide_index=True,
+#         )
 
 
-        st.caption(f"Showing {min(len(show), 100):,} of {len(show):,} matching findings.")
+#         st.caption(f"Showing {min(len(show), 100):,} of {len(show):,} matching findings.")
 
-        st.download_button(
-            "Download Full Findings CSV",
-            data=emerging_findings.to_csv(index=False).encode('utf-8'),
-            file_name=f"emerging_patterns_{emerging_month_label}.csv",
-            mime="text/csv",
-        )
+#         st.download_button(
+#             "Download Full Findings CSV",
+#             data=emerging_findings.to_csv(index=False).encode('utf-8'),
+#             file_name=f"emerging_patterns_{emerging_month_label}.csv",
+#             mime="text/csv",
+#         )
 
-        st.markdown('<div class="section-header">Drill-Down</div>', unsafe_allow_html=True)
-        finding_options = show.head(50)['Entity'] + ' — ' + show.head(50)['Dimension']
-        if len(finding_options):
-            chosen = st.selectbox('Inspect a finding', finding_options.tolist())
-            chosen_idx = finding_options.tolist().index(chosen)
-            chosen_row = show.head(50).iloc[chosen_idx]
-            st.markdown(f"**{chosen_row['Entity']}** — {chosen_row['Dimension']} / {chosen_row['Metric']}")
-            st.markdown(
-                f"<div class='insight-card {chosen_row['Severity']}'>{chosen_row['Reason']}</div>",
-                unsafe_allow_html=True,
-            )
+#         st.markdown('<div class="section-header">Drill-Down</div>', unsafe_allow_html=True)
+#         finding_options = show.head(50)['Entity'] + ' — ' + show.head(50)['Dimension']
+#         if len(finding_options):
+#             chosen = st.selectbox('Inspect a finding', finding_options.tolist())
+#             chosen_idx = finding_options.tolist().index(chosen)
+#             chosen_row = show.head(50).iloc[chosen_idx]
+#             st.markdown(f"**{chosen_row['Entity']}** — {chosen_row['Dimension']} / {chosen_row['Metric']}")
+#             st.markdown(
+#                 f"<div class='insight-card {chosen_row['Severity']}'>{chosen_row['Reason']}</div>",
+#                 unsafe_allow_html=True,
+#             )
 
-    with st.expander("How Emerging Patterns works"):
-        st.markdown(
-            """
-Every finding compares a metric for **this month** against a statistical baseline,
-using one of four generic methods — never a hand-written fraud rule:
+#     with st.expander("How Emerging Patterns works"):
+#         st.markdown(
+#             """
+# Every finding compares a metric for **this month** against a statistical baseline,
+# using one of four generic methods — never a hand-written fraud rule:
 
-- **Z-score** — how many standard deviations this month's value is from that
-  entity's own trailing average (provider rejection rate, drug volume, etc.)
-- **Percent change** — straightforward magnitude of the move
-- **Frequency deviation / novelty** — combinations (gender × diagnosis, age × drug,
-  drug × diagnosis) that have **zero** occurrences in every baseline month
-- **Outlier detection** — for brand-new entities with no history yet, this month's
-  volume is compared against all its current peers instead
+# - **Z-score** — how many standard deviations this month's value is from that
+#   entity's own trailing average (provider rejection rate, drug volume, etc.)
+# - **Percent change** — straightforward magnitude of the move
+# - **Frequency deviation / novelty** — combinations (gender × diagnosis, age × drug,
+#   drug × diagnosis) that have **zero** occurrences in every baseline month
+# - **Outlier detection** — for brand-new entities with no history yet, this month's
+#   volume is compared against all its current peers instead
 
-Findings are blended into a single 0–100 **Anomaly Score** and ranked. The same
-math runs identically across every dimension — providers, drugs, diagnoses,
-rejection codes, gender, age — so a new pattern type doesn't require a new rule,
-only more historical months to compare against.
-            """
-        )
+# Findings are blended into a single 0–100 **Anomaly Score** and ranked. The same
+# math runs identically across every dimension — providers, drugs, diagnoses,
+# rejection codes, gender, age — so a new pattern type doesn't require a new rule,
+# only more historical months to compare against.
+#             """
+#         )
 

@@ -56,7 +56,8 @@ WARNING_THRESHOLD = 55
 
 FINDINGS_COLUMNS = [
     "Rank", "Dimension", "Entity", "Metric", "Current", "Baseline_Mean",
-    "Pct_Change", "ZScore", "Baseline_Months", "Novel", "Anomaly_Score",
+    # "Pct_Change", "ZScore", 
+    "Baseline_Months", "Novel", "Anomaly_Score",
     "Severity", "Reason",
 ]
 
@@ -82,7 +83,7 @@ def _volume_component(current_vol):
     return min(current_vol / VOLUME_REF_CAP, 1.0) * 100.0
 
 
-def anomaly_score(z, pct, current_vol, baseline_vol, novel=False, combo_novel=False):
+def anomaly_score(z, pct, current_vol, novel=False, combo_novel=False):
     """
     Composite 0-100 score. This is the one change that matters most:
     volume is now a first-class input, weighted equally with z-score
@@ -110,7 +111,7 @@ def anomaly_score(z, pct, current_vol, baseline_vol, novel=False, combo_novel=Fa
     # A drift finding compared against a thin baseline is weaker evidence,
     # even if the math says it's extreme — halve it rather than drop it,
     # so the analyst can still see it lower in the list if they want to.
-    if not novel and baseline_vol < MIN_BASELINE_CLAIMS:
+    if not novel:# and baseline_vol < MIN_BASELINE_CLAIMS:
         score *= 0.5
 
     return round(min(score, 100.0), 1)
@@ -265,12 +266,7 @@ def _generic_drift(current_df, historical, table_name, entity_cols, value_col,
         if pd.isna(z) and pd.isna(pct) and not novelty:
             continue
 
-        score = anomaly_score(
-            z, pct,
-            current_vol=current_val,
-            baseline_vol=baseline_mean if pd.notna(baseline_mean) else 0,
-            novel=novelty,
-        )
+        score = anomaly_score(z, pct, current_vol=current_val,novel=novelty)
         if score < MIN_SCORE_TO_REPORT:
             continue
 
@@ -291,8 +287,8 @@ def _generic_drift(current_df, historical, table_name, entity_cols, value_col,
             "Metric": metric_label,
             "Current": round(float(current_val), 2),
             "Baseline_Mean": round(float(baseline_mean), 2) if pd.notna(baseline_mean) else None,
-            "Pct_Change": round(float(pct), 1) if pd.notna(pct) else None,
-            "ZScore": round(float(z), 2) if pd.notna(z) else None,
+            # "Pct_Change": round(float(pct), 1) if pd.notna(pct) else None,
+            # "ZScore": round(float(z), 2) if pd.notna(z) else None,
             "Baseline_Months": n_months,
             "Novel": novelty,
             "Anomaly_Score": score,
@@ -345,9 +341,7 @@ def detect_true_novelty(current_snapshot, historical, table_name, entity_col,
     rows = []
     for _, r in candidates.iterrows():
         claims = float(r[value_col])
-        score = anomaly_score(
-            z=np.nan, pct=np.nan, current_vol=claims, baseline_vol=0, novel=True,
-        )
+        score = anomaly_score(z=np.nan, pct=np.nan, current_vol=claims, novel=True)
         if score < MIN_SCORE_TO_REPORT:
             continue
 
@@ -357,9 +351,7 @@ def detect_true_novelty(current_snapshot, historical, table_name, entity_col,
             "Entity": entity_label,
             "Metric": metric_label,
             "Current": claims,
-            "Baseline_Mean": 0,
-            "Pct_Change": None,
-            "ZScore": None,
+            # "Baseline_Mean": 0,
             "Baseline_Months": len(historical),
             "Novel": True,
             "Anomaly_Score": score,
@@ -413,9 +405,7 @@ def detect_cross_novelty(current_df, historical, table_name, entity_cols,
         claims = float(r["Claims"])
         z = (claims - peer_mean) / peer_std if peer_std else np.nan
 
-        score = anomaly_score(
-            z=z, pct=np.nan, current_vol=claims, baseline_vol=0, combo_novel=True,
-        )
+        score = anomaly_score(z=z, pct=np.nan, current_vol=claims, combo_novel=True)
         if score < MIN_SCORE_TO_REPORT:
             continue
 
@@ -427,9 +417,9 @@ def detect_cross_novelty(current_df, historical, table_name, entity_cols,
             "Entity": entity_label,
             "Metric": "Claims (new combination)",
             "Current": claims,
-            "Baseline_Mean": 0,
-            "Pct_Change": None,
-            "ZScore": round(float(z), 2) if pd.notna(z) else None,
+            # "Baseline_Mean": 0,
+            # "Pct_Change": None,
+            # "ZScore": round(float(z), 2) if pd.notna(z) else None,
             "Baseline_Months": len(historical),
             "Novel": True,
             "Anomaly_Score": score,
@@ -455,7 +445,6 @@ def detect_gender_diagnosis_anomaly(current_snapshot, historical):
         cur, historical, "gender_diag_stats", ["MEM_GENDER", "PA_PRIMARY_DIAG"],
         "Gender \u00d7 Diagnosis", reason,
     )
-
 
 def detect_age_drug_anomaly(current_snapshot, historical):
     cur = current_snapshot.get("age_drug_stats")

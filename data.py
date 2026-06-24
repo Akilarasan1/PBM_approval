@@ -230,140 +230,6 @@ def compute_weekly_trends(drug_df):
     return weekly
 
 
-# def compute_new_drugs_always_ncov(drug_df, full_df=None, min_claims=5):
-#     """
-#     Find ALL drug codes with 100% NCOV rejection in the current month.
-    
-#     Logic:
-#     1. Filter to current month claims only
-#     2. For each drug, count total claims and NCOV rejections
-#     3. Flag if: 100% of claims are rejected AND 100% of rejections are NCOV
-
-#     If `full_df` is supplied (the full uploaded date range, across every
-#     month on record), each flagged drug is additionally checked against
-#     its own drug-diagnosis combination(s) to see whether that exact combo
-#     was EVER approved anywhere in the upload. This distinguishes a
-#     genuinely brand-new/never-covered drug from one that WAS covered
-#     before and something changed (formulary drop, miscoding, etc.).
-    
-#     Args:
-#         drug_df: DataFrame with claims (the scoped/current-month view)
-#         full_df: DataFrame spanning the full uploaded date range, used only
-#             for the "ever approved" history lookup. If None, the
-#             Ever_Approved columns are omitted.
-#         min_claims: Minimum claims threshold
-        
-#     Returns:
-#         DataFrame with suspicious drugs (100% NCOV rejection this month)
-#     """
-
-   
-
-#     required_cols = ['SERVICE_DT', 'DRUG_CODE', 'IS_REJECTED', 'REJ_CODE_PREFIX']
-#     missing = [c for c in required_cols if c not in drug_df.columns]
-    
-#     if missing:
-#         return pd.DataFrame()
-
-#     # Filter to dated records only
-#     dated = drug_df[drug_df['SERVICE_DT'].notna()].copy()
-#     if dated.empty:
-#         return pd.DataFrame()
-
-#     # Ensure datetime
-#     dated['SERVICE_DT'] = pd.to_datetime(dated['SERVICE_DT'], errors='coerce')
-#     dated = dated[dated['SERVICE_DT'].notna()]
-#     if dated.empty:
-#         return pd.DataFrame()
-
-#     # ── KEY CHANGE: Filter to CURRENT MONTH (not just new drugs) ──
-#     period_end = dated['SERVICE_DT'].max()
-#     period_start = period_end.replace(day=1)
-    
-#     # Get ALL drugs in current month (new OR existing)
-#     current_month_drugs = dated[
-#         (dated['SERVICE_DT'] >= period_start) & (dated['SERVICE_DT'] <= period_end)
-#     ].copy()
-    
-#     if current_month_drugs.empty:
-#         return pd.DataFrame()
-
-#     # ── NCOV COUNTING: From rejected claims only ──────────────────
-#     # REJ_CODE_PREFIX is only populated for REJECTED claims (IS_REJECTED=1)
-#     # So we count NCOV only from the rejected subset
-    
-#     rejected_claims = current_month_drugs[current_month_drugs['IS_REJECTED'] == 1].copy()
-    
-#     if rejected_claims.empty:
-#         return pd.DataFrame()
-    
-#     # Clean REJ_CODE_PREFIX for consistent matching
-#     rejected_claims['REJ_CODE_PREFIX'] = (
-#         rejected_claims['REJ_CODE_PREFIX']
-#         .astype(str)
-#         .str.upper()
-#         .str.strip()
-#     )
-    
-#     # Aggregate statistics for ALL drugs in current month
-#     ncov_stats = (
-#         current_month_drugs.groupby('DRUG_CODE')
-#         .agg(
-#             Total=('IS_REJECTED', 'count'),           # All claims this month
-#             Rejected=('IS_REJECTED', 'sum'),          # Rejected count this month
-#             Rejected_Amount=('TREAT_REJ_AMT', 'sum') if 'TREAT_REJ_AMT' in current_month_drugs.columns else ('IS_REJECTED', 'sum')
-#         )
-#         .reset_index()
-#     )
-    
-#     # Count NCOV in rejected claims only
-#     ncov_count = (
-#         rejected_claims.groupby('DRUG_CODE')['REJ_CODE_PREFIX']
-#         .apply(lambda x: x.str.contains('NCOV', na=False).sum())
-#         .reset_index()
-#         .rename(columns={'REJ_CODE_PREFIX': 'NCOV_Count'})
-#     )
-    
-#     # Merge NCOV counts
-#     ncov_stats = ncov_stats.merge(ncov_count, on='DRUG_CODE', how='left')
-#     ncov_stats['NCOV_Count'] = ncov_stats['NCOV_Count'].fillna(0).astype(int)
-    
-#     # Calculate rejection rate
-#     ncov_stats['RejRate_%'] = (ncov_stats['Rejected'] / ncov_stats['Total'] * 100).round(1)
-    
-#     # ── FLAG CRITERIA ──────────────────────────────────────────────
-#     # A drug is suspicious if:
-#     # 1. It has minimum claim threshold
-#     # 2. 100% of claims are rejected (Total == Rejected)
-#     # 3. 100% of rejections are NCOV (Rejected == NCOV_Count)
-#     # 4. At least 1 NCOV rejection
-#     always_ncov = ncov_stats[
-#         (ncov_stats['Total'] >= min_claims)
-#         & (ncov_stats['Rejected'] == ncov_stats['Total'])  # 100% rejection
-#         & (ncov_stats['NCOV_Count'] == ncov_stats['Rejected'])  # 100% NCOV
-#         & (ncov_stats['NCOV_Count'] > 0)  # At least 1 NCOV
-#     ].copy()
-    
-#     if always_ncov.empty:
-#         return pd.DataFrame()
-
-#     if 'DRUG_NAME' in drug_df.columns:
-#         names = drug_df[['DRUG_CODE', 'DRUG_NAME']].drop_duplicates('DRUG_CODE')
-#         always_ncov = always_ncov.merge(names, on='DRUG_CODE', how='left')
-
-#     # Sort by NCOV count (highest first)
-#     always_ncov = always_ncov.sort_values('NCOV_Count', ascending=False)
-
-#     # Rename for display
-#     always_ncov = always_ncov.rename(columns={
-#         'Total': 'Total_Claims',
-#         'Rejected': 'Rejected_Claims',
-#         'NCOV_Count': 'NCOV_Rejections',
-#         'Amt': 'Rejected_Amount'
-#     })
-#     return always_ncov
-
-
 def compute_new_drugs_always_ncov(drug_df, full_df=None, min_claims=5):
     """
     Find ALL drug codes with 100% NCOV rejection in the current month.
@@ -806,10 +672,6 @@ def summarize_payment_anomalies(anomalies):
     }
 
 
-
-
-
-
 def compute_provider_detail(drug_df, doc_lic_no):
     """Return drill-down stats for a single provider."""
     subset = drug_df[drug_df['DOC_LIC_NO'] == doc_lic_no].copy()
@@ -883,3 +745,261 @@ def enrich_combo_display(combo_df, drug_df):
         'Drug Code', 'Drug Name', 'DRUG_DIAG_COMBO', 'Total', 'Rejected', 'RejRate',
     ] if c in display.columns]
     return display[cols]
+
+
+def compute_new_entities_appearing(drug_df, historical_snapshots):
+    """
+    Detect entities (drugs, diagnoses, providers, drug-diagnosis combos) 
+    appearing in the current month that were NEVER seen in any baseline month.
+    
+    Returns a dict with keys 'drugs', 'diagnoses', 'providers', 'combos', each 
+    containing a DataFrame with:
+    - Entity (code/name)
+    - Claims (total this month)
+    - Approved (count)
+    - Rejected (count)
+    - Rejection_Rate % (formatted)
+    - Top_Rejection_Code
+    - Top_Rejection_Desc
+    
+    Business meaning: Brand-new entities entering the population for the first time.
+    Immediately see whether they're covered or getting specific rejection patterns.
+    
+    With no baseline months, returns empty dict (too early to identify "new" vs "old").
+    """
+    
+    from utils import CODE_DESC
+    
+    results = {}
+    
+    if not historical_snapshots or len(historical_snapshots) == 0:
+        return results
+    
+    # Collect all entities ever seen in baseline months
+    baseline_drugs = set()
+    baseline_diags = set()
+    baseline_provs = set()
+    baseline_combos = set()
+    
+    for month, snapshot in historical_snapshots.items():
+        if 'drug_stats' in snapshot and snapshot['drug_stats'] is not None and not snapshot['drug_stats'].empty:
+            baseline_drugs.update(
+                snapshot['drug_stats']['DRUG_CODE'].dropna().astype(str).unique()
+            )
+        if 'diag_stats' in snapshot and snapshot['diag_stats'] is not None and not snapshot['diag_stats'].empty:
+            baseline_diags.update(
+                snapshot['diag_stats']['PA_PRIMARY_DIAG'].dropna().astype(str).unique()
+            )
+        if 'provider_stats' in snapshot and snapshot['provider_stats'] is not None and not snapshot['provider_stats'].empty:
+            baseline_provs.update(
+                snapshot['provider_stats']['DOC_LIC_NO'].dropna().astype(str).unique()
+            )
+        if 'combo_stats' in snapshot and snapshot['combo_stats'] is not None and not snapshot['combo_stats'].empty:
+            baseline_combos.update(
+                snapshot['combo_stats']['DRUG_DIAG_COMBO'].dropna().astype(str).unique()
+            )
+    
+    def _top_rejection_for_entity(subset):
+        """Helper: find most common rejection code in a subset, with description."""
+        if len(subset) == 0 or subset['IS_REJECTED'].sum() == 0:
+            return 'N/A', 'N/A'
+        rej = subset[subset['IS_REJECTED'] == 1]
+        if 'REJ_CODE_PREFIX' in rej.columns and len(rej) > 0:
+            top_code = rej['REJ_CODE_PREFIX'].value_counts().index[0]
+            desc = CODE_DESC.get(top_code, 'Unknown')
+            return top_code, desc
+        return 'N/A', 'N/A'
+    
+    # ── NEW DRUGS ──────────────────────────────────────────────────
+    if 'DRUG_CODE' in drug_df.columns and 'IS_REJECTED' in drug_df.columns:
+        period_end = pd.to_datetime(drug_df['SERVICE_DT']).max()
+        period_start = period_end.replace(day=1)
+
+        drug_df = drug_df[(drug_df['SERVICE_DT'] >= period_start) & (drug_df['SERVICE_DT'] <= period_end)].copy()
+
+        current_drugs = set(drug_df['DRUG_CODE'].dropna().astype(str).unique())
+
+        new_drugs = current_drugs - baseline_drugs
+        
+        if new_drugs:
+            new_drug_df = drug_df[drug_df['DRUG_CODE'].astype(str).isin(new_drugs)].copy()
+            
+            drug_agg = (
+                new_drug_df.groupby('DRUG_CODE')
+                .agg(
+                    Claims=('IS_REJECTED', 'count'),
+                    Approved=('IS_REJECTED', lambda x: (x == 0).sum()),
+                    Rejected=('IS_REJECTED', 'sum'),
+                )
+                .reset_index()
+            )
+            
+            drug_agg['Rejection_Rate'] = (
+                (drug_agg['Rejected'] / drug_agg['Claims'] * 100).round(1).astype(str) + '%'
+            )
+            
+            top_codes = []
+            top_descs = []
+            for drug_code in drug_agg['DRUG_CODE']:
+                code, desc = _top_rejection_for_entity(
+                    new_drug_df[new_drug_df['DRUG_CODE'] == drug_code]
+                )
+                top_codes.append(code)
+                top_descs.append(desc)
+            
+            drug_agg['Top_Rejection_Code'] = top_codes
+            drug_agg['Top_Rejection_Desc'] = top_descs
+            
+            # Add drug name if available
+            if 'DRUG_NAME' in drug_df.columns:
+                drug_names = drug_df[['DRUG_CODE', 'DRUG_NAME']].drop_duplicates('DRUG_CODE')
+                drug_agg = drug_agg.merge(drug_names, on='DRUG_CODE', how='left')
+                display_cols = ['DRUG_CODE', 'DRUG_NAME', 'Claims', 'Approved', 'Rejected', 
+                                'Rejection_Rate', 'Top_Rejection_Code', 'Top_Rejection_Desc']
+            else:
+                display_cols = ['DRUG_CODE', 'Claims', 'Approved', 'Rejected', 
+                                'Rejection_Rate', 'Top_Rejection_Code', 'Top_Rejection_Desc']
+            
+            results['drugs'] = drug_agg[[c for c in display_cols if c in drug_agg.columns]].sort_values(
+                'Claims', ascending=False
+            )
+    
+    # ── NEW DIAGNOSES ──────────────────────────────────────────────
+    if 'PA_PRIMARY_DIAG' in drug_df.columns and 'IS_REJECTED' in drug_df.columns:
+        current_diags = set(drug_df['PA_PRIMARY_DIAG'].dropna().astype(str).unique())
+        new_diags = current_diags - baseline_diags
+        
+        if new_diags:
+            new_diag_df = drug_df[drug_df['PA_PRIMARY_DIAG'].astype(str).isin(new_diags)].copy()
+            
+            diag_agg = (
+                new_diag_df.groupby('PA_PRIMARY_DIAG')
+                .agg(
+                    Claims=('IS_REJECTED', 'count'),
+                    Approved=('IS_REJECTED', lambda x: (x == 0).sum()),
+                    Rejected=('IS_REJECTED', 'sum'),
+                )
+                .reset_index()
+            )
+            
+            diag_agg['Rejection_Rate'] = (
+                (diag_agg['Rejected'] / diag_agg['Claims'] * 100).round(1).astype(str) + '%'
+            )
+            
+            top_codes = []
+            top_descs = []
+            for diag in diag_agg['PA_PRIMARY_DIAG']:
+                code, desc = _top_rejection_for_entity(
+                    new_diag_df[new_diag_df['PA_PRIMARY_DIAG'] == diag]
+                )
+                top_codes.append(code)
+                top_descs.append(desc)
+            
+            diag_agg['Top_Rejection_Code'] = top_codes
+            diag_agg['Top_Rejection_Desc'] = top_descs
+            
+            results['diagnoses'] = diag_agg[[
+                'PA_PRIMARY_DIAG', 'Claims', 'Approved', 'Rejected', 
+                'Rejection_Rate', 'Top_Rejection_Code', 'Top_Rejection_Desc'
+            ]].sort_values('Claims', ascending=False)
+    
+    # ── NEW PROVIDERS ──────────────────────────────────────────────
+    if 'DOC_LIC_NO' in drug_df.columns and 'IS_REJECTED' in drug_df.columns:
+        current_provs = set(drug_df['DOC_LIC_NO'].dropna().astype(str).unique())
+        new_provs = current_provs - baseline_provs
+        
+        if new_provs:
+            new_prov_df = drug_df[drug_df['DOC_LIC_NO'].astype(str).isin(new_provs)].copy()
+            
+            prov_agg = (
+                new_prov_df.groupby('DOC_LIC_NO')
+                .agg(
+                    Claims=('IS_REJECTED', 'count'),
+                    Approved=('IS_REJECTED', lambda x: (x == 0).sum()),
+                    Rejected=('IS_REJECTED', 'sum'),
+                )
+                .reset_index()
+            )
+            
+            prov_agg['Rejection_Rate'] = (
+                (prov_agg['Rejected'] / prov_agg['Claims'] * 100).round(1).astype(str) + '%'
+            )
+            
+            top_codes = []
+            top_descs = []
+            for prov in prov_agg['DOC_LIC_NO']:
+                code, desc = _top_rejection_for_entity(
+                    new_prov_df[new_prov_df['DOC_LIC_NO'] == prov]
+                )
+                top_codes.append(code)
+                top_descs.append(desc)
+            
+            prov_agg['Top_Rejection_Code'] = top_codes
+            prov_agg['Top_Rejection_Desc'] = top_descs
+            
+            # Add provider name if available
+            if 'DOC_NAME' in drug_df.columns:
+                prov_names = drug_df[['DOC_LIC_NO', 'DOC_NAME']].drop_duplicates('DOC_LIC_NO')
+                prov_agg = prov_agg.merge(prov_names, on='DOC_LIC_NO', how='left')
+                display_cols = ['DOC_LIC_NO', 'DOC_NAME', 'Claims', 'Approved', 'Rejected',
+                                'Rejection_Rate', 'Top_Rejection_Code', 'Top_Rejection_Desc']
+            else:
+                display_cols = ['DOC_LIC_NO', 'Claims', 'Approved', 'Rejected',
+                                'Rejection_Rate', 'Top_Rejection_Code', 'Top_Rejection_Desc']
+            
+            results['providers'] = prov_agg[[c for c in display_cols if c in prov_agg.columns]].sort_values(
+                'Claims', ascending=False
+            )
+    
+    # ── NEW DRUG-DIAGNOSIS COMBOS ──────────────────────────────────
+    if 'DRUG_DIAG_COMBO' in drug_df.columns and 'IS_REJECTED' in drug_df.columns:
+        current_combos = set(drug_df['DRUG_DIAG_COMBO'].dropna().astype(str).unique())
+        new_combos = current_combos - baseline_combos
+        
+        if new_combos:
+            new_combo_df = drug_df[drug_df['DRUG_DIAG_COMBO'].astype(str).isin(new_combos)].copy()
+            
+            combo_agg = (
+                new_combo_df.groupby('DRUG_DIAG_COMBO')
+                .agg(
+                    Claims=('IS_REJECTED', 'count'),
+                    Approved=('IS_REJECTED', lambda x: (x == 0).sum()),
+                    Rejected=('IS_REJECTED', 'sum'),
+                )
+                .reset_index()
+            )
+            
+            combo_agg['Rejection_Rate'] = (
+                (combo_agg['Rejected'] / combo_agg['Claims'] * 100).round(1).astype(str) + '%'
+            )
+            
+            top_codes = []
+            top_descs = []
+            for combo in combo_agg['DRUG_DIAG_COMBO']:
+                code, desc = _top_rejection_for_entity(
+                    new_combo_df[new_combo_df['DRUG_DIAG_COMBO'] == combo]
+                )
+                top_codes.append(code)
+                top_descs.append(desc)
+            
+            combo_agg['Top_Rejection_Code'] = top_codes
+            combo_agg['Top_Rejection_Desc'] = top_descs
+
+            # Remove tiny combos
+            combo_agg = combo_agg[(combo_agg['Claims'] >= 4)]
+
+            # Optional: keep only interesting combos
+            combo_agg = combo_agg[(combo_agg['Rejected'] > 0) |(combo_agg['Claims'] >= 10)]
+
+            results['combos'] = combo_agg[[
+                'DRUG_DIAG_COMBO',
+                'Claims',
+                'Approved',
+                'Rejected',
+                'Rejection_Rate',
+                'Top_Rejection_Code',
+                'Top_Rejection_Desc'
+            ]].sort_values('Claims', ascending=False)
+    
+    return results
+ 
