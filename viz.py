@@ -366,6 +366,104 @@ def plot_entity_trend(history_long, entity_label, current_month, current_val, va
     return fig
 
 
+
+def plot_ncov_coverage_trend(trend, drug_code):
+    """Line chart: claims/approved/NCOV-rejected for one drug, month by month —
+    the visual for a coverage-flip drug, showing exactly when it changed."""
+    sub = trend[trend['DRUG_CODE'] == drug_code].sort_values('Month')
+    if sub.empty:
+        return None
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=sub['Month'], y=sub['Claims'], name='Total Claims',
+        marker_color='#388BFD', opacity=0.35, marker_line_width=0,
+    ))
+    fig.add_trace(go.Scatter(
+        x=sub['Month'], y=sub['Approved_Claims'], name='Approved',
+        mode='lines+markers', line=dict(color='#00C853', width=2), marker=dict(size=9),
+    ))
+    fig.add_trace(go.Scatter(
+        x=sub['Month'], y=sub['NCOV_Rejections'], name='NCOV Rejected',
+        mode='lines+markers', line=dict(color='#FF4444', width=2), marker=dict(size=9),
+    ))
+    fig.update_layout(**PLOT_THEME, height=300, showlegend=True,
+                      yaxis_title='Claims', title=f'{drug_code} — coverage over time')
+    return fig
+
+
+
+def plot_diagnosis_drug_sankey(matrix):
+    """Three-level Sankey: Diagnosis -> Drug -> Approved/Rejected. Every link
+    is derived from the same matrix table, so flows stay consistent —
+    a drug's outflow to Approved+Rejected always sums to its total inflow."""
+    if matrix.empty:
+        return None
+
+    diagnoses = matrix['PA_PRIMARY_DIAG'].unique().tolist()
+    drugs = matrix['DRUG_CODE'].unique().tolist()
+    outcomes = ['Approved', 'Rejected']
+
+    labels = [f"Dx: {d}" for d in diagnoses] + [f"Rx: {d}" for d in drugs] + outcomes
+    diag_idx = {d: i for i, d in enumerate(diagnoses)}
+    drug_idx = {d: i + len(diagnoses) for i, d in enumerate(drugs)}
+    outcome_idx = {'Approved': len(diagnoses) + len(drugs), 'Rejected': len(diagnoses) + len(drugs) + 1}
+
+    sources, targets, values, colors = [], [], [], []
+
+    for _, r in matrix.iterrows():
+        sources.append(diag_idx[r['PA_PRIMARY_DIAG']])
+        targets.append(drug_idx[r['DRUG_CODE']])
+        values.append(r['Claims'])
+        colors.append('rgba(56,139,253,0.35)')
+
+    by_drug = matrix.groupby('DRUG_CODE')[['Approved', 'Rejected']].sum().reset_index()
+    for _, r in by_drug.iterrows():
+        if r['Approved'] > 0:
+            sources.append(drug_idx[r['DRUG_CODE']])
+            targets.append(outcome_idx['Approved'])
+            values.append(r['Approved'])
+            colors.append('rgba(0,200,83,0.35)')
+        if r['Rejected'] > 0:
+            sources.append(drug_idx[r['DRUG_CODE']])
+            targets.append(outcome_idx['Rejected'])
+            values.append(r['Rejected'])
+            colors.append('rgba(255,68,68,0.35)')
+
+    node_colors = (
+        ['#9C27B0'] * len(diagnoses) + ['#388BFD'] * len(drugs) + ['#00C853', '#FF4444']
+    )
+
+    fig = go.Figure(go.Sankey(
+        node=dict(label=labels, color=node_colors, pad=12, thickness=14,
+                  line=dict(color='#21262D', width=0.5)),
+        link=dict(source=sources, target=targets, value=values, color=colors),
+    ))
+    theme = {**PLOT_THEME, 'font': dict(color='#E6EDF3', size=11, family='Inter')}
+    fig.update_layout(**theme, height=520)
+    return fig
+
+
+def plot_diagnosis_drug_heatmap(matrix):
+    """Diagnosis x Drug heatmap, color = rejection rate %."""
+    if matrix.empty:
+        return None
+
+    pivot = matrix.pivot(index='PA_PRIMARY_DIAG', columns='DRUG_CODE', values='RejRate_%')
+
+    fig = go.Figure(go.Heatmap(
+        z=pivot.values, x=pivot.columns, y=pivot.index,
+        colorscale=[[0, '#0D1117'], [0.5, '#FF8C00'], [1, '#FF4444']],
+        colorbar=dict(title='Rej Rate %', tickfont=dict(color='#8B949E')),
+        hovertemplate='Diagnosis: %{y}<br>Drug: %{x}<br>Rej Rate: %{z:.1f}%<extra></extra>',
+    ))
+    fig.update_layout(**PLOT_THEME, height=460, xaxis_tickangle=-45,
+                      xaxis_title='Drug Code', yaxis_title='Diagnosis')
+    return fig
+
+
+
+
 def plot_weekly_trends(weekly):
     """Plot weekly claim volume and rejection rate."""
     if weekly.empty:

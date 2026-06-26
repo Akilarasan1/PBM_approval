@@ -227,7 +227,10 @@ def _generic_drift(current_df, historical, table_name, entity_cols, value_col,
     base = _baseline_stats(hist_long, entity_cols, value_col)
 
     merged = current_df[entity_cols + [value_col]].merge(base, on=entity_cols, how="left")
-    merged["n_months"] = merged["n_months"].fillna(0)
+    # merged["n_months"] = merged["n_months"].fillna(0)
+    merged["n_months"] = (
+        pd.to_numeric(merged["n_months"], errors="coerce")
+        .fillna(0))
 
     peer_vals = current_df[value_col]
     peer_mean, peer_std = peer_vals.mean(), peer_vals.std(ddof=0)

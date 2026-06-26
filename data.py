@@ -230,6 +230,96 @@ def compute_weekly_trends(drug_df):
     return weekly
 
 
+def compute_ncov_coverage_trend(full_df, min_claims=5):
+    """
+    Monthly Not-Covered (NCOV) trend per drug across the full uploaded date
+    range, plus the drugs that genuinely FLIP — NCOV-rejected in one month,
+    approved in a different month for the same drug. This is the broader,
+    multi-month version of the Ever_Approved check in
+    compute_new_drugs_always_ncov: that function only looks at drugs that
+    are 100%-rejected in the CURRENT month; this one tracks every drug's
+    coverage behavior across every month on record, regardless of whether
+    any single month hits 100%.
+
+    Args:
+        full_df: DataFrame spanning the full uploaded date range
+        min_claims: minimum total claims (summed across all months) for a
+            drug to be considered — filters out single-claim noise
+
+    Returns:
+        (trend, flips) tuple of DataFrames:
+        trend — one row per (DRUG_CODE, Month): Claims, NCOV_Rejections,
+            Approved_Claims, NCOV_Rate_%
+        flips — one row per drug with a genuine month-to-month flip:
+            DRUG_CODE, DRUG_NAME (if available), NCOV_Months, Approved_Months,
+            Total_NCOV_Rejections, Total_Approved_Claims, Top_Diagnosis,
+            Top_Provider
+    """
+    required = {'SERVICE_DT', 'DRUG_CODE', 'IS_REJECTED', 'REJ_CODE_PREFIX'}
+    empty = (pd.DataFrame(), pd.DataFrame())
+    if full_df is None or not required.issubset(full_df.columns):
+        return empty
+
+    dated = full_df[full_df['SERVICE_DT'].notna()].copy()
+    if dated.empty:
+        return empty
+
+    dated['Month'] = dated['SERVICE_DT'].dt.to_period('M').astype(str)
+    dated['REJ_CODE_PREFIX'] = dated['REJ_CODE_PREFIX'].astype(str).str.upper().str.strip()
+    dated['IS_NCOV'] = (dated['IS_REJECTED'] == 1) & (dated['REJ_CODE_PREFIX'] == 'NCOV')
+
+    trend = (
+        dated.groupby(['DRUG_CODE', 'Month'])
+        .agg(
+            Claims=('IS_REJECTED', 'count'),
+            NCOV_Rejections=('IS_NCOV', 'sum'),
+            Approved_Claims=('IS_REJECTED', lambda s: int((s == 0).sum())),
+        )
+        .reset_index()
+    )
+    trend['NCOV_Rate_%'] = (trend['NCOV_Rejections'] / trend['Claims'] * 100).round(1)
+
+    drug_totals = trend.groupby('DRUG_CODE')['Claims'].sum()
+    eligible_drugs = set(drug_totals[drug_totals >= min_claims].index)
+
+    flip_rows = []
+    for drug, g in trend[trend['DRUG_CODE'].isin(eligible_drugs)].groupby('DRUG_CODE'):
+        ncov_months = set(g.loc[g['NCOV_Rejections'] > 0, 'Month'])
+        approved_months = set(g.loc[g['Approved_Claims'] > 0, 'Month'])
+        flip_months = approved_months - ncov_months
+        if not ncov_months or not flip_months:
+            continue
+
+        drug_rows = dated[dated['DRUG_CODE'] == drug]
+        top_diag = None
+        if 'PA_PRIMARY_DIAG' in drug_rows.columns:
+            mode_vals = drug_rows['PA_PRIMARY_DIAG'].dropna().mode()
+            top_diag = mode_vals.iloc[0] if len(mode_vals) else None
+        top_provider = None
+        if 'DOC_LIC_NO' in drug_rows.columns:
+            mode_vals = drug_rows['DOC_LIC_NO'].dropna().mode()
+            top_provider = mode_vals.iloc[0] if len(mode_vals) else None
+
+        flip_rows.append({
+            'DRUG_CODE': drug,
+            'NCOV_Months': ', '.join(sorted(ncov_months)),
+            'Approved_Months': ', '.join(sorted(flip_months)),
+            'Total_NCOV_Rejections': int(g['NCOV_Rejections'].sum()),
+            'Total_Approved_Claims': int(g['Approved_Claims'].sum()),
+            'Top_Diagnosis': top_diag if top_diag else '—',
+            'Top_Provider': top_provider if top_provider else '—',
+        })
+
+    flips = pd.DataFrame(flip_rows)
+    if not flips.empty:
+        if 'DRUG_NAME' in full_df.columns:
+            names = full_df[['DRUG_CODE', 'DRUG_NAME']].drop_duplicates('DRUG_CODE')
+            flips = flips.merge(names, on='DRUG_CODE', how='left')
+        flips = flips.sort_values('Total_NCOV_Rejections', ascending=False).reset_index(drop=True)
+
+    return trend, flips
+
+
 def compute_new_drugs_always_ncov(drug_df, full_df=None, min_claims=5):
     """
     Find ALL drug codes with 100% NCOV rejection in the current month.
@@ -544,8 +634,6 @@ def compute_new_drugs_always_ncov(drug_df, full_df=None, min_claims=5):
     return always_ncov
 
 
-
-
 def compute_provider_investigation(drug_df, min_claims=20):
     """Build prioritized provider investigation queue."""
     required = {'DOC_LIC_NO', 'REJ_CODE_PREFIX', 'IS_REJECTED'}
@@ -724,6 +812,111 @@ def compute_provider_detail(drug_df, doc_lic_no):
         'top_drugs': top_drugs,
         'top_combos': top_combos,
     }
+
+
+def compute_diagnosis_treatment_matrix(drug_df, top_n_diag=15, top_n_drug=15):
+    """
+    Diagnosis x Drug cross-section, restricted to the top N diagnoses and
+    top N drugs by claim volume (full cardinality is thousands of each —
+    unrestricted would be unreadable as a heatmap/Sankey and likely too
+    large to render). Feeds both the heatmap and the Sankey: every link in
+    each chart is derived from this same table, so Diagnosis->Drug and
+    Drug->Outcome flows stay numerically consistent with each other.
+
+    Args:
+        drug_df: DataFrame with claims
+        top_n_diag: number of top diagnoses (by volume) to include
+        top_n_drug: number of top drugs (by volume) to include
+
+    Returns:
+        DataFrame: PA_PRIMARY_DIAG, DRUG_CODE, Claims, Approved, Rejected,
+        RejRate_% — one row per (diagnosis, drug) pair that actually
+        co-occurs within the top-N x top-N subset.
+    """
+    required = {'PA_PRIMARY_DIAG', 'DRUG_CODE', 'IS_REJECTED'}
+    if not required.issubset(drug_df.columns):
+        return pd.DataFrame()
+
+    top_diag = drug_df['PA_PRIMARY_DIAG'].value_counts().head(top_n_diag).index
+    top_drug = drug_df['DRUG_CODE'].value_counts().head(top_n_drug).index
+
+    sub = drug_df[drug_df['PA_PRIMARY_DIAG'].isin(top_diag) & drug_df['DRUG_CODE'].isin(top_drug)]
+    if sub.empty:
+        return pd.DataFrame()
+
+    matrix = (
+        sub.groupby(['PA_PRIMARY_DIAG', 'DRUG_CODE'])
+        .agg(Claims=('IS_REJECTED', 'count'), Rejected=('IS_REJECTED', 'sum'))
+        .reset_index()
+    )
+    matrix['Approved'] = matrix['Claims'] - matrix['Rejected']
+    matrix['RejRate_%'] = (matrix['Rejected'] / matrix['Claims'] * 100).round(1)
+    return matrix
+
+
+def compute_mixed_outcome_diagnoses(drug_df, min_claims=20, top_k_drugs=3):
+    """
+    Diagnoses where the SAME diagnosis led to both approved and rejected
+    claims — answers "can the same diagnosis lead to both outcomes?"
+    directly, with the specific drugs on each side so it's actionable
+    rather than just a yes/no.
+
+    Args:
+        drug_df: DataFrame with claims
+        min_claims: minimum total claims for a diagnosis to be reported
+        top_k_drugs: how many top drugs to list on each side (approved/rejected)
+
+    Returns:
+        DataFrame: PA_PRIMARY_DIAG, Total_Claims, Approved_Claims,
+        Rejected_Claims, Approved_Drugs, Rejected_Drugs, Top_Rejection_Reason
+        — one row per diagnosis with a genuinely mixed outcome, sorted by
+        Total_Claims descending.
+    """
+    required = {'PA_PRIMARY_DIAG', 'DRUG_CODE', 'IS_REJECTED'}
+    if not required.issubset(drug_df.columns):
+        return pd.DataFrame()
+
+    agg = (
+        drug_df.groupby('PA_PRIMARY_DIAG')
+        .agg(Total_Claims=('IS_REJECTED', 'count'), Rejected_Claims=('IS_REJECTED', 'sum'))
+        .reset_index()
+    )
+    agg['Approved_Claims'] = agg['Total_Claims'] - agg['Rejected_Claims']
+    mixed = agg[
+        (agg['Total_Claims'] >= min_claims) & (agg['Rejected_Claims'] > 0) & (agg['Approved_Claims'] > 0)
+    ].copy()
+    if mixed.empty:
+        return pd.DataFrame()
+
+    def _top_drugs(rows):
+        return ', '.join(f"{d} ({n})" for d, n in rows['DRUG_CODE'].value_counts().head(top_k_drugs).items())
+
+    rows = []
+    for _, r in mixed.iterrows():
+        diag = r['PA_PRIMARY_DIAG']
+        diag_rows = drug_df[drug_df['PA_PRIMARY_DIAG'] == diag]
+        approved_drugs = _top_drugs(diag_rows[diag_rows['IS_REJECTED'] == 0])
+        rejected_rows = diag_rows[diag_rows['IS_REJECTED'] == 1]
+        rejected_drugs = _top_drugs(rejected_rows)
+
+        top_reason = None
+        if 'REJ_CODE_PREFIX' in rejected_rows.columns and len(rejected_rows):
+            mode_vals = rejected_rows['REJ_CODE_PREFIX'].mode()
+            top_reason = mode_vals.iloc[0] if len(mode_vals) else None
+
+        rows.append({
+            'PA_PRIMARY_DIAG': diag,
+            'Total_Claims': int(r['Total_Claims']),
+            'Approved_Claims': int(r['Approved_Claims']),
+            'Rejected_Claims': int(r['Rejected_Claims']),
+            'Approved_Drugs': approved_drugs if approved_drugs else '—',
+            'Rejected_Drugs': rejected_drugs if rejected_drugs else '—',
+            'Top_Rejection_Reason': top_reason if top_reason else '—',
+        })
+
+    return pd.DataFrame(rows).sort_values('Total_Claims', ascending=False).reset_index(drop=True)
+
+
 
 
 def enrich_combo_display(combo_df, drug_df):

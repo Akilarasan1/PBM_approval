@@ -8,11 +8,14 @@ from insight import gen_insights, summarize_finding
 import time
 from utils import STREAMLIT_CSS, THRESHOLDS, SAMPLE_DATA_FILE
 import numpy as np
+
 from data import (
     process, compute_code_stats, compute_drug_diag_combos, compute_provider_stats,
     compute_weekly_trends, compute_new_drugs_always_ncov, compute_provider_investigation,
     compute_provider_detail, enrich_combo_display, validate_columns,
-    compute_payment_anomalies, summarize_payment_anomalies,compute_new_entities_appearing
+    compute_payment_anomalies, summarize_payment_anomalies, compute_new_entities_appearing,
+    compute_ncov_coverage_trend, compute_diagnosis_treatment_matrix,
+    compute_mixed_outcome_diagnoses,
 )
 
 from viz import (
@@ -22,7 +25,9 @@ from viz import (
     plot_provider_volume_and_rejection, plot_provider_risk_map,
     plot_age_violations, plot_weekly_trends,
     plot_anomaly_scatter, plot_findings_by_dimension,
+    plot_ncov_coverage_trend, plot_diagnosis_drug_sankey, plot_diagnosis_drug_heatmap,
 )
+
 import history
 import anomaly
 
@@ -491,6 +496,58 @@ with tab3:
         else:
             st.info('No safe combos found.')
 
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── DIAGNOSIS × TREATMENT vs OUTCOME ────────────────────────────────
+    st.markdown('<div class="section-header">🔀 Diagnosis × Treatment vs Outcome</div>', unsafe_allow_html=True)
+    st.caption(
+        'Are rejections driven more by the treatment than the diagnosis? Restricted to the '
+        'top 15 diagnoses and top 15 drugs by volume for readability — '
+        'this is a pattern view, not full coverage of every claim.'
+    )
+
+    diag_drug_matrix = compute_diagnosis_treatment_matrix(drug_df, top_n_diag=15, top_n_drug=15)
+    if not diag_drug_matrix.empty:
+        sankey_fig = plot_diagnosis_drug_sankey(diag_drug_matrix)
+        if sankey_fig:
+            st.plotly_chart(sankey_fig, width="stretch")
+
+        st.markdown('<div class="section-header">Diagnosis vs Drug — Rejection Rate Heatmap</div>', unsafe_allow_html=True)
+        heatmap_fig = plot_diagnosis_drug_heatmap(diag_drug_matrix)
+        if heatmap_fig:
+            st.plotly_chart(heatmap_fig, width="stretch")
+    else:
+        st.info('Not enough diagnosis/drug overlap to build this view.')
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── SAME DIAGNOSIS, DIFFERENT OUTCOME ───────────────────────────────
+    st.markdown('<div class="section-header">⚖️ Same Diagnosis, Different Outcome</div>', unsafe_allow_html=True)
+    st.caption('Diagnoses where the exact same diagnosis led to BOTH approved and rejected claims — with which drugs landed on which side.')
+
+    mixed_outcome = compute_mixed_outcome_diagnoses(drug_df, min_claims=20)
+    if not mixed_outcome.empty:
+        st.markdown(f"""<div class="insight-card warning">
+            ⚖️ <b>{len(mixed_outcome)} diagnoses</b> have a mixed approval/rejection outcome.
+        </div>""", unsafe_allow_html=True)
+        st.dataframe(mixed_outcome.head(30), width="stretch", hide_index=True)
+
+        st.markdown('<div class="section-header">Claim-Level Drill-Down</div>', unsafe_allow_html=True)
+        diag_options = mixed_outcome['PA_PRIMARY_DIAG'].head(30).tolist()
+        selected_diag = st.selectbox('Select a diagnosis to see individual claims:', diag_options)
+        if selected_diag:
+            evidence_cols = [c for c in [
+                'DRUG_CODE', 'DRUG_NAME', 'DOC_LIC_NO', 'PBM_APPR_STS', 'REJ_CODE_PREFIX',
+                'TREAT_EST_AMT', 'TREAT_APPR_AMT', 'TREAT_REJ_AMT', 'SERVICE_DT',
+            ] if c in drug_df.columns]
+            evidence = drug_df[drug_df['PA_PRIMARY_DIAG'] == selected_diag][evidence_cols]
+            st.dataframe(evidence.head(100), width="stretch", hide_index=True)
+            st.caption(f"Showing up to 100 of {len(evidence):,} claims for {selected_diag}.")
+    else:
+        st.info('No diagnoses found with both approved and rejected outcomes (min 20 claims).')
+
+
 # ════════════════════════════════════════════════════
 # TAB 4 — PROVIDERS
 # ════════════════════════════════════════════════════
@@ -774,7 +831,6 @@ with tab5:
         st.markdown( '<div class="section-header">🆕 New Entities Appearing</div>',unsafe_allow_html=True)
         st.caption('New drugs, diagnoses, providers and drug-diagnosis combinations ' 'never seen in prior uploaded months.')
         total_new = sum(len(v) for v in new_entities.values())
-        print(">>>> ",new_entities.keys())
         if total_new > 0:
             st.success(f"{total_new:,} new entities detected")
 
@@ -869,7 +925,49 @@ with tab5:
     else:
         st.success('No new drugs with 100% NCOV rejection found this month.')
 
+
     st.markdown("<br>", unsafe_allow_html=True)
+
+
+    # ── COVERAGE FLIPS — REJECTED IN ONE MONTH, APPROVED IN ANOTHER ────
+    st.markdown('<div class="section-header">🔄 Coverage Flips — Rejected in One Month, Approved in Another</div>', unsafe_allow_html=True)
+    st.caption(
+        'Drugs that had at least one month with NCOV rejections and at least one DIFFERENT '
+        'month with approvals — a clean before/after coverage change, not a gradual drift.'
+    )
+
+    ncov_trend, ncov_flips = compute_ncov_coverage_trend(
+        drug_df_full, min_claims=THRESHOLDS.get('new_entity_min_claims', 5)
+    )
+
+    if ncov_flips.empty:
+        st.info(
+            "No coverage flips found. This needs at least 2 months of data in the upload to "
+            "detect — if you've only uploaded one month, there's nothing to compare against yet."
+        )
+    else:
+        st.markdown(f"""<div class="insight-card critical">
+            🔄 <b>{len(ncov_flips)} drug(s)</b> flipped coverage status between months.
+        </div>""", unsafe_allow_html=True)
+
+        flip_cols = [c for c in [
+            'DRUG_CODE', 'DRUG_NAME', 'NCOV_Months', 'Approved_Months',
+            'Total_NCOV_Rejections', 'Total_Approved_Claims', 'Top_Diagnosis', 'Top_Provider',
+        ] if c in ncov_flips.columns]
+        st.dataframe(ncov_flips[flip_cols].head(20), width="stretch", hide_index=True)
+
+        drug_options = ncov_flips['DRUG_CODE'].head(20).tolist()
+        selected_flip_drug = st.selectbox('See the month-by-month trend for:', drug_options)
+        if selected_flip_drug:
+            fig = plot_ncov_coverage_trend(ncov_trend, selected_flip_drug)
+            if fig:
+                st.plotly_chart(fig, width="stretch")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+
+
+
 
 
     # ── PAYMENT INTEGRITY (Keep existing section) ──────────────────────

@@ -235,15 +235,63 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 
 
 
-/* Provider selectbox typing text */
+/* ── FIX: white-on-white select/multiselect contrast ───────────
+   Trying to force the TEXT to a fixed color kept losing to other
+   rules, and Streamlit/BaseWeb sometimes shows the value through a
+   placeholder (which `color` on the input does NOT style — that
+   needs `::placeholder`). Instead of fighting over text color,
+   make the control itself dark so it matches the rest of the app
+   and contrast is guaranteed no matter which DOM trick renders the
+   value (div, span, or input/placeholder).
+
+   This covers Gender, Age Group, Period (sidebar) AND Provider
+   drill-down, "Inspect a finding", dimension/severity filters
+   (main-content tabs) — the closed control lives in the normal
+   component tree, so these selectors reach it everywhere. */
+[data-baseweb="select"] > div {
+    background-color: #161B22 !important;
+    border-color: #30363D !important;
+}
+[data-baseweb="select"] > div *,
 [data-baseweb="select"] input {
-    color: black !important;
-    -webkit-text-fill-color: black !important;
+    color: #E6EDF3 !important;
+    -webkit-text-fill-color: #E6EDF3 !important;
+    font-weight: 500 !important;
+}
+[data-baseweb="select"] input::placeholder {
+    color: #E6EDF3 !important;
+    opacity: 1 !important;
+}
+[data-baseweb="select"] svg {
+    fill: #8B949E !important;
 }
 
-/* Dropdown options */
-[data-baseweb="select"] * {
-    color: black !important;
+/* The OPEN dropdown menu is rendered by BaseWeb in a portal attached
+   directly to <body> — it is NOT nested inside stSidebar/stSelectbox,
+   so none of the rules above can ever reach it. It needs its own
+   top-level selector. */
+[data-baseweb="popover"] [data-baseweb="menu"] {
+    background-color: #161B22 !important;
+}
+[data-baseweb="popover"] li,
+[data-baseweb="popover"] li * {
+    color: #E6EDF3 !important;
+    background-color: transparent !important;
+}
+[data-baseweb="popover"] li:hover,
+[data-baseweb="popover"] li[aria-selected="true"] {
+    background-color: #21262D !important;
+}
+
+/* Multiselect selected-item "pills" (e.g. dimension/severity filters
+   in Emerging Patterns) — dark chip with light text/icon. */
+[data-baseweb="tag"] {
+    background-color: #21262D !important;
+}
+[data-baseweb="tag"] span,
+[data-baseweb="tag"] svg {
+    color: #E6EDF3 !important;
+    fill: #E6EDF3 !important;
 }
 
 
@@ -254,8 +302,9 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 /* Plotly charts transparent bg */
 .js-plotly-plot { border-radius: 12px; }
 
-/* Hide streamlit branding */
-#MainMenu, footer, header { visibility: hidden; }
+#MainMenu { visibility: hidden;}
+
+footer { visibility: hidden;}
 
 /* Custom scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
