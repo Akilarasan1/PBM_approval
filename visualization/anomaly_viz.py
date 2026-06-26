@@ -1,5 +1,6 @@
 import plotly.graph_objects as go
 from config.utils import PLOT_THEME
+from plotly.subplots import make_subplots
 
 
 def plot_anomaly_scatter(findings):
@@ -84,3 +85,23 @@ def plot_ncov_coverage_trend(trend, drug_code):
     fig.update_layout(**PLOT_THEME, height=300, showlegend=True,
                       yaxis_title='Claims', title=f'{drug_code} — coverage over time')
     return fig
+
+
+
+ 
+ 
+def plot_rejection_reason_trend(trend_df, label):
+    """Generic monthly-trend bar chart for any keyword-bucket rejection-reason
+    analysis (Documentation, Medical Necessity, etc.)."""
+    if trend_df.empty:
+        return None
+ 
+    fig = go.Figure(go.Bar(
+        x=trend_df['Month'], y=trend_df['Frequency'],
+        marker_color='#FF8C00', marker_line_width=0,
+        text=trend_df['Frequency'], textposition='outside', textfont=dict(color='#E6EDF3'),
+    ))
+    fig.update_layout(**PLOT_THEME, height=260, yaxis_title='Rejections', title=label)
+    return fig
+ 
+ 

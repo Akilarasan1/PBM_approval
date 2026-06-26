@@ -22,12 +22,14 @@ from explore.anomaly import *
 from explore.fraud_detection import *
 from explore.insight import *
 from explore.stats import *
+from explore.patient import * 
 
 from visualization.overview import *
 from visualization.provider_viz import *
 from visualization.anomaly_viz import *
 from visualization.clinical_viz import *
 
+from datetime import datetime
 import storage.history as history
 from pathlib import Path
 
@@ -85,8 +87,10 @@ with st.sidebar:
 
             t1 = time.perf_counter()
             print("File Received....!",t1)
+            print("File Enter time.... ", datetime.now())
             drug_df_full_raw = process(file_bytes, filename)
-            print(f'File Loaded Time :: {(time.perf_counter() - t1) / 60:.2f} minutes')
+            # print(f'File Loaded Time :: {(time.perf_counter() - t1) / 60:.2f} minutes')
+            print("\n Processed Completed .....",datetime.now())
             missing_required, missing_optional = validate_columns(drug_df_full_raw)
             if missing_optional:
                 with st.sidebar.expander("⚠️ Missing Optional Features"):
@@ -311,7 +315,7 @@ payment_anomaly_summary = summarize_payment_anomalies(payment_anomalies)
 if enable_patterns:
     emerging_findings = run_emerging_pattern_scan(current_snapshot, historical_snapshots, drug_df=drug_df)
 else:
-    emerging_findings = pd.DataFrame(columns=anomaly.FINDINGS_COLUMNS[1:])
+    emerging_findings = pd.DataFrame(columns=FINDINGS_COLUMNS[1:])
 
 
 new_drugs_ncov = compute_new_drugs_always_ncov(
@@ -332,6 +336,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 # ════════════════════════════════════════════════════
 # TAB 1 — OVERVIEW
 # ════════════════════════════════════════════════════
+
 with tab1:
     # KPI row
     cols = st.columns(5)
@@ -417,6 +422,62 @@ with tab1:
             st.dataframe(gen,  width="stretch", hide_index=True)
         else:
             st.info('Gender column not available.')
+
+                # need to review it 
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── OUTPATIENT vs INPATIENT ──────────────────────────────────────────
+    st.markdown('<div class="section-header">🏨 Outpatient vs Inpatient</div>', unsafe_allow_html=True)
+    service_type_stats = compute_service_type_stats(drug_df)
+    if not service_type_stats.empty:
+        smallest_n = service_type_stats['Claims'].min()
+        if smallest_n < 1000:
+            st.caption(
+                f"⚠️ One service type has only {smallest_n:,} claims this period — treat its rate "
+                "as directional, not a strong statistical signal."
+            )
+        st_col1, st_col2 = st.columns(2)
+        with st_col1:
+            fig = plot_service_type_rejection(service_type_stats)
+            if fig:
+                st.plotly_chart(fig, width="stretch")
+        with st_col2:
+            st.dataframe(service_type_stats, width="stretch", hide_index=True)
+
+        st_trend = compute_service_type_monthly_trend(drug_df_full)
+        if not st_trend.empty:
+            fig = plot_service_type_monthly_trend(st_trend)
+            if fig:
+                st.plotly_chart(fig, width="stretch")
+    else:
+        st.info('SERVICE_TYPE column not available.')
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── QUANTITY IMPACT ───────────────────────────────────────────────────
+    st.markdown('<div class="section-header">📦 Quantity Impact</div>', unsafe_allow_html=True)
+    st.caption('Does prescribing a higher quantity change the odds of rejection?')
+    qty_bands = compute_quantity_bands(drug_df)
+    if not qty_bands.empty:
+        fig = plot_quantity_bands(qty_bands)
+        if fig:
+            st.plotly_chart(fig, width="stretch")
+
+        with st.expander("Drugs where higher quantity = meaningfully higher rejection rate"):
+            qty_by_drug = compute_quantity_rejection_by_drug(drug_df, min_claims_per_band=5, min_delta=15.0)
+            if not qty_by_drug.empty:
+                st.markdown(f"""<div class="insight-card warning">
+                    📦 <b>{len(qty_by_drug)} drug(s)</b> show a meaningfully higher rejection rate at
+                    higher prescribed quantities (≥15 percentage point gap between lowest and highest
+                    quantity band, both with at least 5 claims).
+                </div>""", unsafe_allow_html=True)
+                st.dataframe(qty_by_drug.head(20), width="stretch", hide_index=True)
+            else:
+                st.info('No drugs found with a meaningful quantity-vs-rejection pattern this period.')
+    else:
+        st.info('PA_QTY column not available.')
+
 
 # ════════════════════════════════════════════════════
 # TAB 2 — FINANCIAL
@@ -742,10 +803,10 @@ with tab5:
             "Month-over-month drift detection will activate once you upload another month. "
             "For now, same-month outlier detection is active."
         )
-    elif len(baseline_months_used) < anomaly.MIN_BASELINE_MONTHS:
+    elif len(baseline_months_used) < MIN_BASELINE_MONTHS:
         st.warning(
             f"📅 Baseline has **{len(baseline_months_used)} month(s)**. "
-            f"Need {anomaly.MIN_BASELINE_MONTHS}+ months for full z-score accuracy. "
+            f"Need {MIN_BASELINE_MONTHS}+ months for full z-score accuracy. "
             f"Upload one more month to unlock complete drift detection."
         )
     else:

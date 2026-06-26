@@ -89,3 +89,91 @@ def compute_weekly_trends(drug_df):
     )
     weekly['RejRate'] = (weekly['Rejected'] / weekly['Total'] * 100).round(1)
     return weekly
+
+
+#new ly added need to check
+
+
+# ── REJECTION REASON KEYWORD HOTSPOTS (Documentation, Medical Necessity) ──
+TEXT_REASON_COLUMNS = ['REJ_REMARKS', 'PBM_REJ_DESC', 'PAT_REJ_REMARKS']
+
+REJECTION_REASON_KEYWORDS = {
+    'Documentation': ['document'],  # catches documentation/absence of documentation/
+                                      # lack of documentation/missing documentation, etc.
+    'Medical Necessity': ['medically necessary', 'medical necessity'],
+}
+
+
+def _text_reason_mask(df, keywords):
+    """OR-combined, case-insensitive keyword match across every available
+    rejection-text column. Broader and more robust than matching one exact
+    phrase in one column — the same reason is phrased differently across
+    files/months in real exports (see: medical-necessity phrasing varies
+    month to month), so an exact-string filter silently misses real cases."""
+    text_cols = [c for c in TEXT_REASON_COLUMNS if c in df.columns]
+    if not text_cols:
+        return pd.Series(False, index=df.index)
+
+    pattern = '|'.join(keywords)
+    mask = pd.Series(False, index=df.index)
+    for col in text_cols:
+        mask = mask | df[col].str.contains(pattern, case=False, na=False, regex=True)
+    return mask
+
+
+def compute_rejection_reason_hotspots(drug_df, keywords):
+    """
+    Generic keyword-bucket rejection-reason analysis. Works identically for
+    Documentation, Medical Necessity, or any other keyword list — no
+    per-category hardcoded logic.
+
+    Args:
+        drug_df: DataFrame with claims
+        keywords: list of substrings to match (case-insensitive, OR'd)
+
+    Returns:
+        (matched_claims, summary) tuple:
+        matched_claims — the filtered claim-level rows (rejected only)
+        summary — DataFrame: PA_PRIMARY_DIAG, DRUG_CODE, DOC_LIC_NO,
+        Frequency — sorted by Frequency descending
+    """
+    if 'IS_REJECTED' not in drug_df.columns:
+        return pd.DataFrame(), pd.DataFrame()
+
+    rejected = drug_df[drug_df['IS_REJECTED'] == 1].copy()
+    if rejected.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    mask = _text_reason_mask(rejected, keywords)
+    matched = rejected[mask]
+    if matched.empty:
+        return matched, pd.DataFrame()
+
+    group_cols = [c for c in ['PA_PRIMARY_DIAG', 'DRUG_CODE', 'DOC_LIC_NO'] if c in matched.columns]
+    if not group_cols:
+        return matched, pd.DataFrame()
+
+    summary = (
+        matched.groupby(group_cols).size().reset_index(name='Frequency')
+        .sort_values('Frequency', ascending=False).reset_index(drop=True)
+    )
+    return matched, summary
+
+
+def compute_rejection_reason_monthly_trend(full_df, keywords):
+    """Month-by-month count of rejections matching the given keyword bucket,
+    across the full uploaded date range."""
+    if 'SERVICE_DT' not in full_df.columns or 'IS_REJECTED' not in full_df.columns:
+        return pd.DataFrame()
+
+    dated = full_df[full_df['SERVICE_DT'].notna() & (full_df['IS_REJECTED'] == 1)].copy()
+    if dated.empty:
+        return pd.DataFrame()
+
+    mask = _text_reason_mask(dated, keywords)
+    matched = dated[mask].copy()
+    if matched.empty:
+        return pd.DataFrame()
+
+    matched['Month'] = matched['SERVICE_DT'].dt.to_period('M').astype(str)
+    return matched.groupby('Month').size().reset_index(name='Frequency').sort_values('Month')

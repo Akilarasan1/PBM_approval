@@ -224,3 +224,58 @@ def plot_weekly_trends(weekly):
     fig.update_yaxes(title_text='Rejection Rate %', secondary_y=True, gridcolor='#21262D')
     fig.update_xaxes(tickangle=-30)
     return fig
+
+
+
+def plot_service_type_rejection(service_type_stats):
+    """Bar chart: rejection rate by service type, with claim count labeled
+    so a tiny inpatient sample isn't misread as a strong signal."""
+    if service_type_stats.empty:
+        return None
+
+    fig = go.Figure(go.Bar(
+        x=service_type_stats['Service_Type'], y=service_type_stats['RejRate_%'],
+        marker_color=['#388BFD', '#9C27B0'][:len(service_type_stats)],
+        marker_line_width=0,
+        text=[f"{r:.1f}% (n={c:,})" for r, c in zip(service_type_stats['RejRate_%'], service_type_stats['Claims'])],
+        textposition='outside', textfont=dict(color='#E6EDF3'),
+    ))
+    fig.update_layout(**PLOT_THEME, height=300, yaxis_title='Rejection Rate %')
+    return fig
+
+
+def plot_service_type_monthly_trend(trend):
+    """Line chart: rejection rate per service type, month by month."""
+    if trend.empty:
+        return None
+
+    fig = go.Figure()
+    colors = {'Outpatient': '#388BFD', 'Inpatient': '#9C27B0'}
+    for stype, sub in trend.groupby('Service_Type'):
+        fig.add_trace(go.Scatter(
+            x=sub['Month'], y=sub['RejRate_%'], name=stype,
+            mode='lines+markers', line=dict(color=colors.get(stype, '#607D8B'), width=2),
+            marker=dict(size=8),
+        ))
+    fig.update_layout(**PLOT_THEME, height=300, showlegend=True, yaxis_title='Rejection Rate %')
+    return fig
+
+
+def plot_quantity_bands(band_stats):
+    """Claims volume (bars) + rejection rate (line) per quantity band."""
+    if band_stats.empty:
+        return None
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(go.Bar(
+        x=band_stats['Band'], y=band_stats['Claims'], name='Claims',
+        marker_color='#388BFD', marker_line_width=0,
+    ), secondary_y=False)
+    fig.add_trace(go.Scatter(
+        x=band_stats['Band'], y=band_stats['Rejection_Rate_%'], name='Rejection Rate %',
+        mode='lines+markers', line=dict(color='#FF4444', width=2), marker=dict(size=9),
+    ), secondary_y=True)
+    fig.update_layout(**PLOT_THEME, height=320, showlegend=True)
+    fig.update_yaxes(title_text='Claims', secondary_y=False, gridcolor='#21262D')
+    fig.update_yaxes(title_text='Rejection Rate %', secondary_y=True, gridcolor='#21262D')
+    return fig
