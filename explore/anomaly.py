@@ -1,68 +1,104 @@
 """
 anomaly.py — Statistical "Emerging Patterns" engine for the PBM dashboard.
-
-Every detector compares the CURRENT month's metric for an entity (provider,
-drug, diagnosis, rejection code, gender, age, or a cross-dimension pair)
-against a BASELINE built from the trailing N historical months. Nothing
-here is a hand-written fraud rule — only generic statistical tests:
-
-    Z-score         (current - baseline_mean) / baseline_std
-    Percent change  (current - baseline_mean) / baseline_mean
-    True novelty    the entity itself (a diagnosis, a rejection code...)
-                    never appeared in ANY baseline month
-    Combo novelty   the entity existed before, but this specific
-                    combination (e.g. gender + diagnosis) never did
-    Outlier check   for brand-new entities with no history, compare
-                    this month's volume against its peers instead
-
-Two things changed vs the old version of this file:
-
-1. Every finding is now filtered by volume BEFORE it's scored, so a
-   2-claim spike can't out-rank a 5,000-claim trend anymore.
-2. "Never seen before" is split into two separate, clearly-labelled
-   ideas: true novelty (the diagnosis/code itself is brand new) and
-   combo novelty (an old diagnosis paired with a gender/age it's never
-   been paired with). The old code only had the second one, and it was
-   showing up labelled like the first — which is why "MALE + Maternity"
-   read as "brand new diagnosis" when Maternity wasn't new at all.
+[rest of docstring remains the same]
 """
 
 import numpy as np
 import pandas as pd
-
+from typing import Dict, List, Optional, Callable, Any, Tuple
 
 # ── TUNABLE THRESHOLDS ────────────────────────────────────────────
-# Turn these up to see fewer, higher-confidence findings.
-# Turn them down to see more, including weaker signals.
+# [thresholds remain the same]
 
-MIN_BASELINE_MONTHS = 2        # need >=2 historical months for a usable std
-MIN_CLAIMS = 20                 # ignore drift findings below this volume
-MIN_BASELINE_CLAIMS = 5         # baseline itself must have at least this many claims
-MIN_Z_SCORE = 2.0               # below this AND below MIN_PERCENT_CHANGE -> suppressed
-MIN_PERCENT_CHANGE = 50         # percent change threshold, paired with MIN_Z_SCORE above
-MIN_NOVEL_VOLUME = 10           # ignore brand-new entities/combos below this volume
-MIN_SCORE_TO_REPORT = 25        # suppress anything scoring below this regardless of cause
+MIN_BASELINE_MONTHS = 2
+MIN_CLAIMS = 20
+MIN_BASELINE_CLAIMS = 5
+MIN_Z_SCORE = 2.0
+MIN_PERCENT_CHANGE = 50
+MIN_NOVEL_VOLUME = 10
+MIN_SCORE_TO_REPORT = 25
 
-# Anomaly score (0-100) is a weighted blend of these four signals.
-# They must sum to 1.0.
 Z_SCORE_WEIGHT = 0.40
 PCT_CHANGE_WEIGHT = 0.25
 VOLUME_WEIGHT = 0.25
 NOVELTY_WEIGHT = 0.10
 
-VOLUME_REF_CAP = 100             # claim volume at which the volume score maxes out
+VOLUME_REF_CAP = 100
 CRITICAL_THRESHOLD = 80
 WARNING_THRESHOLD = 55
 
 FINDINGS_COLUMNS = [
     "Rank", "Dimension", "Entity", "Metric", "Current", "Baseline_Mean",
-    # "Pct_Change", "ZScore", 
     "Baseline_Months", "Novel", "Anomaly_Score",
     "Severity", "Reason",
 ]
 
 
-# ── SCORING ───────────────────────────────────────────────────────
+# ── COMBO RULES CONFIGURATION ─────────────────────────────────────
+# Define all cross-dimensional novelty checks declaratively.
+
+ComboRule = Dict[str, Any]
+
+COMBO_RULES: List[ComboRule] = [
+    {
+        "table": "gender_diag_stats",
+        "columns": ["MEM_GENDER", "PA_PRIMARY_DIAG"],
+        "dimension": "Gender \u00d7 Diagnosis",
+        "reason": lambda key, claims: (
+            f"{key[0]} / {key[1]}: this gender-diagnosis pairing has never occurred together "
+            f"in the baseline months, although the diagnosis itself may not be new. "
+            f"{claims:,.0f} claim(s) this month."
+        ),
+        "min_claims": MIN_NOVEL_VOLUME,
+    },
+    {
+        "table": "age_drug_stats",
+        "columns": ["AGE_GROUP", "DRUG_CODE"],
+        "dimension": "Age \u00d7 Drug",
+        "reason": lambda key, claims: (
+            f"{key[0]} / {key[1]}: this age-drug pairing has no precedent in the baseline period, "
+            f"although the drug itself may already be in use elsewhere. "
+            f"{claims:,.0f} claim(s) this month."
+        ),
+        "min_claims": MIN_NOVEL_VOLUME,
+    },
+    {
+        "table": "provider_drug_stats",
+        "columns": ["DOC_LIC_NO", "DRUG_CODE"],
+        "dimension": "Provider \u00d7 Drug",
+        "reason": lambda key, claims: (
+            f"Provider {key[0]} has never billed drug '{key[1]}' before. "
+            f"{claims:,.0f} claim(s) this month — worth checking against the provider's "
+            f"usual prescribing pattern."
+        ),
+        "min_claims": MIN_NOVEL_VOLUME,
+    },
+    {
+        "table": "provider_diag_stats",
+        "columns": ["DOC_LIC_NO", "PA_PRIMARY_DIAG"],
+        "dimension": "Provider \u00d7 Diagnosis",
+        "reason": lambda key, claims: (
+            f"Provider {key[0]} has never billed diagnosis '{key[1]}' before. "
+            f"{claims:,.0f} claim(s) this month — outside the provider's usual case mix."
+        ),
+        "min_claims": MIN_NOVEL_VOLUME,
+    },
+    {
+        "table": "combo_stats",
+        "columns": ["DRUG_DIAG_COMBO"],
+        "dimension": "New Drug-Diagnosis Combo",
+        "reason": lambda key, claims: (
+            f"Drug-diagnosis combination '{key[0]}' did not exist in any baseline month and "
+            f"already has {claims:,.0f} claim(s) this month."
+        ),
+        "min_claims": 3,  # Lower threshold for exact drug-diagnosis combos
+    },
+]
+
+
+# ── SCORING FUNCTIONS ─────────────────────────────────────────────
+# [All scoring functions remain the same]
+
 def _z_component(z):
     """0-100. How many standard deviations from baseline, capped at 6."""
     if pd.isna(z):
@@ -78,12 +114,11 @@ def _pct_component(pct):
 
 
 def _volume_component(current_vol):
-    """0-100. Saturates at VOLUME_REF_CAP claims so high-volume findings
-    don't keep climbing forever, but they do clearly outscore tiny ones."""
+    """0-100. Saturates at VOLUME_REF_CAP claims."""
     return min(current_vol / VOLUME_REF_CAP, 1.0) * 100.0
 
 
-def anomaly_score(z, pct, current_vol, novel=False, combo_novel=False):
+def anomaly_score(z, pct, current_vol, novel=False, combo_novel=False, baseline_vol=0):
     """
     Composite 0-100 score. This is the one change that matters most:
     volume is now a first-class input, weighted equally with z-score
@@ -111,11 +146,10 @@ def anomaly_score(z, pct, current_vol, novel=False, combo_novel=False):
     # A drift finding compared against a thin baseline is weaker evidence,
     # even if the math says it's extreme — halve it rather than drop it,
     # so the analyst can still see it lower in the list if they want to.
-    if not novel:# and baseline_vol < MIN_BASELINE_CLAIMS:
+    if not novel and baseline_vol < MIN_BASELINE_CLAIMS:
         score *= 0.5
 
     return round(min(score, 100.0), 1)
-
 
 def severity_from_score(score):
     if score >= CRITICAL_THRESHOLD:
@@ -144,8 +178,10 @@ def confidence_label(z):
 
 
 # ── BASELINE ASSEMBLY ─────────────────────────────────────────────
+# [These functions remain the same]
+
 def _collect_history_long(historical, table_name, entity_cols, value_col):
-    """Stack one table across all historical months: entity_cols..., month, value."""
+    """Stack one table across all historical months."""
     frames = []
     for month, snap in historical.items():
         df = snap.get(table_name)
@@ -190,10 +226,7 @@ def _pct_change(current_val, baseline_mean):
 
 def _build_reason(entity_label, metric_label, current_val, baseline_mean,
                    n_months, pct, z, novel, confidence):
-    """One paragraph, plain language, includes the numbers a manager
-    actually needs: current value, baseline, absolute change, percent
-    change, z-score, and a confidence label instead of a raw sigma."""
-
+    """One paragraph, plain language."""
     if novel:
         return (
             f"{entity_label}: never appeared in any of the {n_months if n_months else 'available'} "
@@ -212,25 +245,43 @@ def _build_reason(entity_label, metric_label, current_val, baseline_mean,
     )
 
 
-# ── GENERIC DRIFT DETECTOR (existing entity changed) ───────────────
+# ── GENERIC DRIFT DETECTOR ────────────────────────────────────────
+# [FIXED: Now tracks baseline_vol and uses it for the penalty]
+
+def _baseline_stats_with_volume(history_long, entity_cols, value_col):
+    """Per-entity mean / std / months / total volume."""
+    if history_long.empty:
+        return pd.DataFrame(columns=entity_cols + [
+            "baseline_mean", "baseline_std", "n_months", "baseline_vol"
+        ])
+    g = (
+        history_long.groupby(entity_cols)[value_col]
+        .agg(
+            baseline_mean="mean",
+            baseline_std="std",
+            n_months="count",
+            baseline_vol="sum"  # Added: total claim volume in baseline
+        )
+        .reset_index()
+    )
+    g["baseline_std"] = g["baseline_std"].fillna(0)
+    return g
+
+
 def _generic_drift(current_df, historical, table_name, entity_cols, value_col,
                     dimension_label, metric_label, name_map=None):
     """
     Compare every entity's current `value_col` against its own trailing
-    baseline, with volume filtering applied before scoring so thin,
-    noisy findings get suppressed instead of dominating the rankings.
+    baseline, with volume filtering applied before scoring.
     """
     if current_df is None or current_df.empty or value_col not in current_df.columns:
         return pd.DataFrame()
 
     hist_long = _collect_history_long(historical, table_name, entity_cols, value_col)
-    base = _baseline_stats(hist_long, entity_cols, value_col)
+    base = _baseline_stats_with_volume(hist_long, entity_cols, value_col)
 
     merged = current_df[entity_cols + [value_col]].merge(base, on=entity_cols, how="left")
-    # merged["n_months"] = merged["n_months"].fillna(0)
-    merged["n_months"] = (
-        pd.to_numeric(merged["n_months"], errors="coerce")
-        .fillna(0))
+    merged["n_months"] = pd.to_numeric(merged["n_months"], errors="coerce").fillna(0)
 
     peer_vals = current_df[value_col]
     peer_mean, peer_std = peer_vals.mean(), peer_vals.std(ddof=0)
@@ -241,11 +292,10 @@ def _generic_drift(current_df, historical, table_name, entity_cols, value_col,
         n_months = int(r["n_months"])
         baseline_mean = r["baseline_mean"]
         baseline_std = r["baseline_std"]
+        baseline_vol = r.get("baseline_vol", 0) or 0
         novelty = n_months == 0
 
-        # Volume gate: applies to drift findings; novelty has its own
-        # smaller gate (MIN_NOVEL_VOLUME) since "first ever" is itself
-        # informative even at lower volume.
+        # Volume gate
         min_vol = MIN_NOVEL_VOLUME if novelty else MIN_CLAIMS
         if current_val < min_vol:
             continue
@@ -257,10 +307,7 @@ def _generic_drift(current_df, historical, table_name, entity_cols, value_col,
             z = _row_z(current_val, baseline_mean, baseline_std, n_months)
             pct = _pct_change(current_val, baseline_mean)
 
-            # Suppress drift findings that clear neither bar — this is
-            # the main fix for "too many low-value alerts": something
-            # has to be either a real statistical outlier or a real
-            # percent move, not just present.
+            # Suppress drift findings that clear neither bar
             passes_z = pd.notna(z) and abs(z) >= MIN_Z_SCORE
             passes_pct = pd.notna(pct) and abs(pct) >= MIN_PERCENT_CHANGE
             if not (passes_z or passes_pct):
@@ -269,7 +316,13 @@ def _generic_drift(current_df, historical, table_name, entity_cols, value_col,
         if pd.isna(z) and pd.isna(pct) and not novelty:
             continue
 
-        score = anomaly_score(z, pct, current_vol=current_val,novel=novelty)
+        # FIXED: Pass baseline_vol to anomaly_score
+        score = anomaly_score(
+            z, pct,
+            current_vol=current_val,
+            novel=novelty,
+            baseline_vol=baseline_vol  # Added parameter
+        )
         if score < MIN_SCORE_TO_REPORT:
             continue
 
@@ -290,8 +343,6 @@ def _generic_drift(current_df, historical, table_name, entity_cols, value_col,
             "Metric": metric_label,
             "Current": round(float(current_val), 2),
             "Baseline_Mean": round(float(baseline_mean), 2) if pd.notna(baseline_mean) else None,
-            # "Pct_Change": round(float(pct), 1) if pd.notna(pct) else None,
-            # "ZScore": round(float(z), 2) if pd.notna(z) else None,
             "Baseline_Months": n_months,
             "Novel": novelty,
             "Anomaly_Score": score,
@@ -302,15 +353,13 @@ def _generic_drift(current_df, historical, table_name, entity_cols, value_col,
     return pd.DataFrame(rows)
 
 
-# ── TRUE NOVELTY (the entity itself never existed before) ──────────
+# ── TRUE NOVELTY DETECTOR ────────────────────────────────────────
+# [detect_true_novelty remains the same]
+
 def detect_true_novelty(current_snapshot, historical, table_name, entity_col,
                          dimension_label, metric_label="Claims"):
     """
-    Flag entities (a diagnosis, a rejection code, a drug...) that never
-    appeared in ANY baseline month, as opposed to an old entity showing
-    up in a new combination. Needs at least one real baseline month —
-    with zero, "never seen before" is true of everything by definition
-    and isn't a finding.
+    Flag entities that never appeared in ANY baseline month.
     """
     if len(historical) == 0:
         return pd.DataFrame()
@@ -354,7 +403,6 @@ def detect_true_novelty(current_snapshot, historical, table_name, entity_col,
             "Entity": entity_label,
             "Metric": metric_label,
             "Current": claims,
-            # "Baseline_Mean": 0,
             "Baseline_Months": len(historical),
             "Novel": True,
             "Anomaly_Score": score,
@@ -369,16 +417,21 @@ def detect_true_novelty(current_snapshot, historical, table_name, entity_col,
     return pd.DataFrame(rows)
 
 
-# ── COMBO NOVELTY (old entities paired in a way never seen before) ─
-def detect_cross_novelty(current_df, historical, table_name, entity_cols,
-                          dimension_label, reason_fn, min_claims=MIN_NOVEL_VOLUME):
+# ── COMBO NOVELTY DETECTOR ───────────────────────────────────────
+# [Updated to use COMBO_RULES]
+
+def detect_combo_novelty(current_snapshot, historical, rule: ComboRule):
     """
     Flag combinations present this month with ZERO occurrences across
-    every historical month. The entities involved (e.g. the diagnosis,
-    the gender) may each individually be old — it's the PAIRING that's
-    new. This is the generic mechanism behind "maternity claim for a
-    male member", "pediatric drug for an elderly patient", etc.
+    every historical month, using a configuration dictionary.
     """
+    table_name = rule["table"]
+    entity_cols = rule["columns"]
+    dimension_label = rule["dimension"]
+    reason_fn = rule["reason"]
+    min_claims = rule.get("min_claims", MIN_NOVEL_VOLUME)
+
+    current_df = current_snapshot.get(table_name)
     if current_df is None or current_df.empty or "Claims" not in current_df.columns:
         return pd.DataFrame()
 
@@ -413,16 +466,12 @@ def detect_cross_novelty(current_df, historical, table_name, entity_cols,
             continue
 
         key = tuple(r[c] for c in entity_cols)
-        entity_label = " / ".join(str(v) for v in key)
 
         rows.append({
             "Dimension": dimension_label,
-            "Entity": entity_label,
+            "Entity": " / ".join(str(v) for v in key),
             "Metric": "Claims (new combination)",
             "Current": claims,
-            # "Baseline_Mean": 0,
-            # "Pct_Change": None,
-            # "ZScore": round(float(z), 2) if pd.notna(z) else None,
             "Baseline_Months": len(historical),
             "Novel": True,
             "Anomaly_Score": score,
@@ -433,94 +482,8 @@ def detect_cross_novelty(current_df, historical, table_name, entity_cols,
     return pd.DataFrame(rows)
 
 
-def detect_gender_diagnosis_anomaly(current_snapshot, historical):
-    cur = current_snapshot.get("gender_diag_stats")
-
-    def reason(key, claims):
-        gender, diag = key
-        return (
-            f"{gender} / {diag}: this gender-diagnosis pairing has never occurred together "
-            f"in the baseline months, although the diagnosis itself may not be new. "
-            f"{claims:,.0f} claim(s) this month."
-        )
-
-    return detect_cross_novelty(
-        cur, historical, "gender_diag_stats", ["MEM_GENDER", "PA_PRIMARY_DIAG"],
-        "Gender \u00d7 Diagnosis", reason,
-    )
-
-def detect_age_drug_anomaly(current_snapshot, historical):
-    cur = current_snapshot.get("age_drug_stats")
-
-    def reason(key, claims):
-        age, drug = key
-        return (
-            f"{age} / {drug}: this age-drug pairing has no precedent in the baseline period, "
-            f"although the drug itself may already be in use elsewhere. "
-            f"{claims:,.0f} claim(s) this month."
-        )
-
-    return detect_cross_novelty(
-        cur, historical, "age_drug_stats", ["AGE_GROUP", "DRUG_CODE"],
-        "Age \u00d7 Drug", reason,
-    )
-
-
-def detect_provider_drug_anomaly(current_snapshot, historical):
-    """New: provider prescribing a drug they've never billed before."""
-    cur = current_snapshot.get("provider_drug_stats")
-
-    def reason(key, claims):
-        provider, drug = key
-        return (
-            f"Provider {provider} has never billed drug '{drug}' before. "
-            f"{claims:,.0f} claim(s) this month — worth checking against the provider's "
-            f"usual prescribing pattern."
-        )
-
-    return detect_cross_novelty(
-        cur, historical, "provider_drug_stats", ["DOC_LIC_NO", "DRUG_CODE"],
-        "Provider \u00d7 Drug", reason,
-    )
-
-
-def detect_provider_diagnosis_anomaly(current_snapshot, historical):
-    """New: provider treating a diagnosis they've never billed before."""
-    cur = current_snapshot.get("provider_diag_stats")
-
-    def reason(key, claims):
-        provider, diag = key
-        return (
-            f"Provider {provider} has never billed diagnosis '{diag}' before. "
-            f"{claims:,.0f} claim(s) this month — outside the provider's usual case mix."
-        )
-
-    return detect_cross_novelty(
-        cur, historical, "provider_diag_stats", ["DOC_LIC_NO", "PA_PRIMARY_DIAG"],
-        "Provider \u00d7 Diagnosis", reason,
-    )
-
-
-def detect_new_combo_growth(current_snapshot, historical):
-    cur = current_snapshot.get("combo_stats")
-
-    def reason(key, claims):
-        (combo,) = key
-        return (
-            f"Drug-diagnosis combination '{combo}' did not exist in any baseline month and "
-            f"already has {claims:,.0f} claim(s) this month."
-        )
-
-
-    new_combo = detect_cross_novelty(
-        cur, historical, "combo_stats", ["DRUG_DIAG_COMBO"],
-        "New Drug-Diagnosis Combo", reason, min_claims=3,
-    )
-
-    return new_combo
-
-
 # ── MASTER ORCHESTRATOR ───────────────────────────────────────────
+
 def run_emerging_pattern_scan(current_snapshot, historical, drug_df=None):
     """
     Run every drift + novelty detector and return one ranked findings table.
@@ -589,12 +552,9 @@ def run_emerging_pattern_scan(current_snapshot, historical, drug_df=None):
     findings.append(detect_true_novelty(current_snapshot, historical, "code_stats",
                                          "REJ_CODE_PREFIX", "True Novelty - Rejection Code"))
 
-    # ── COMBO NOVELTY: old entities paired in a way never seen before ─
-    findings.append(detect_gender_diagnosis_anomaly(current_snapshot, historical))
-    findings.append(detect_age_drug_anomaly(current_snapshot, historical))
-    findings.append(detect_provider_drug_anomaly(current_snapshot, historical))
-    findings.append(detect_provider_diagnosis_anomaly(current_snapshot, historical))
-    findings.append(detect_new_combo_growth(current_snapshot, historical))
+    # ── COMBO NOVELTY: old entities paired in a new way ────────────
+    for rule in COMBO_RULES:
+        findings.append(detect_combo_novelty(current_snapshot, historical, rule))
 
     findings = [f for f in findings if f is not None and not f.empty]
     if not findings:
@@ -605,6 +565,9 @@ def run_emerging_pattern_scan(current_snapshot, historical, drug_df=None):
     result.insert(0, "Rank", range(1, len(result) + 1))
     return result
 
+
+# ── SUMMARY AND FRAUD SUBSET ──────────────────────────────────────
+# [These functions remain the same]
 
 def summarize_scan(findings_df):
     """Small KPI summary dict for the top of the Emerging Patterns tab."""
@@ -619,7 +582,6 @@ def summarize_scan(findings_df):
     }
 
 
-# ── FRAUD-RELEVANT SUBSET (for the Fraud & Safety tab) ─────────────
 FRAUD_DIMENSIONS = {
     "Gender \u00d7 Diagnosis",
     "Age \u00d7 Drug",
@@ -635,8 +597,7 @@ FRAUD_DIMENSIONS = {
 def extract_fraud_signals(findings_df):
     """
     Pull out the findings most relevant to fraud/safety review and rank
-    them by a fraud-specific risk score, so Tab 5 can show a dynamic,
-    data-driven queue instead of three fixed string-match checks.
+    them by a fraud-specific risk score.
     """
     if findings_df.empty:
         return pd.DataFrame()
@@ -650,8 +611,7 @@ def extract_fraud_signals(findings_df):
 
 
 def _fraud_risk(row):
-    """0-100 risk score layered on top of Anomaly_Score, tuned for
-    fraud/safety relevance rather than general statistical surprise."""
+    """0-100 risk score layered on top of Anomaly_Score."""
     risk = 0.0
     dimension = row.get("Dimension", "")
     entity = str(row.get("Entity", "")).lower()

@@ -36,16 +36,7 @@ import re
 
 import pandas as pd
 
-HISTORY_DIR = Path(__file__).parent / "pbm_history"
-
-# Keys are arbitrary — anomaly.py just reads whichever ones it needs out of
-# the dict, so adding a new aggregate table later requires no schema change
-# here, only a new key produced by build_snapshot().
-SNAPSHOT_TABLES = (
-    "provider_stats", "drug_stats", "diag_stats", "code_stats",
-    "gender_stats", "age_stats", "gender_diag_stats", "age_drug_stats",
-    "combo_stats",
-)
+HISTORY_DIR = Path(__file__).parent / "storage/pbm_history"
 
 
 # ── MONTH LABELING ──────────────────────────────────────────────
@@ -68,7 +59,7 @@ def infer_month_label(drug_df, filename=None):
 
 
 # ── SNAPSHOT CONSTRUCTION ───────────────────────────────────────
-KEY_COLUMNS = (
+SNAPSHOT_KEY_COLUMNS = (
     "DOC_LIC_NO", "DRUG_CODE", "PA_PRIMARY_DIAG", "REJ_CODE_PREFIX",
     "MEM_GENDER", "AGE_GROUP",
 )
@@ -102,7 +93,7 @@ def build_snapshot(drug_df):
     # string up front so grouping, persistence, and later cross-month
     # comparisons are all consistent.
     drug_df = drug_df.copy()
-    for col in KEY_COLUMNS:
+    for col in SNAPSHOT_KEY_COLUMNS:
         if col in drug_df.columns:
             drug_df[col] = drug_df[col].astype(str)
 
@@ -150,7 +141,11 @@ def build_snapshot(drug_df):
         )
 
     if "DRUG_DIAG_COMBO" in drug_df.columns:
-        snap["combo_stats"] = (drug_df.assign(DRUG_DIAG_COMBO=drug_df["DRUG_DIAG_COMBO"].astype(str)).groupby("DRUG_DIAG_COMBO").size().reset_index(name="Claims"))
+        combo = drug_df.copy()
+        combo["DRUG_DIAG_COMBO"] = combo["DRUG_DIAG_COMBO"].astype(str)
+
+        snap["combo_stats"] = (
+            combo.groupby("DRUG_DIAG_COMBO").size().reset_index(name="Claims"))
 
 
     if {"DOC_LIC_NO", "DRUG_CODE"}.issubset(drug_df.columns):

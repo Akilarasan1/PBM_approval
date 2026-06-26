@@ -20,15 +20,16 @@ from typing import Dict, List, Tuple
 
 # ── FRAUD-SPECIFIC SEVERITY THRESHOLDS ──────────────────────────
 FRAUD_THRESHOLDS = {
-    "spike_100pct": 25,      # Anomaly score boost for >100% changes
-    "spike_200pct": 50,      # Boost for >200%
-    "spike_500pct": 80,      # Boost for >500%
-    "new_entity_min_claims": 5,    # Min claims for new entity to flag
-    "high_rejection_jump": 15,     # % point jump in rejection rate
-    "provider_surge_min_volume": 30,  # Min claims for provider volume to matter
-    "fraud_score_critical": 75,
-    "fraud_score_warning": 50,
+    "spike_p70": 20,
+    "spike_p85": 40,
+    "spike_p95": 70,
+
+    "new_entity_min_claims": 5,
+    "provider_surge_min_volume": 30,
+
     "fraud_score_info": 25,
+    "fraud_score_warning": 50,
+    "fraud_score_critical": 75,
 }
 
 
@@ -133,43 +134,6 @@ def extract_fraud_spikes(emerging_findings: pd.DataFrame) -> pd.DataFrame:
         findings.insert(0, "Rank", rank_values)
     
     return findings
-
-
-def _compute_fraud_score(row: pd.Series) -> float:
-    """
-    Blend statistical anomaly score with fraud-specific context.
-    
-    Higher score = higher fraud risk. Factors:
-    - Base anomaly score (0-100 from anomaly.py)
-    - Spike magnitude (>500% is worse than >100%)
-    - Novelty (first-ever appearance)
-    - Volume (higher volume = higher impact)
-    """
-    base_score = float(row["Anomaly_Score"]) if pd.notna(row["Anomaly_Score"]) else 0
-    pct_change = float(row["Pct_Change"]) if pd.notna(row["Pct_Change"]) else 0
-    is_novel = bool(row["Novel"]) if pd.notna(row["Novel"]) else False
-    current_val = float(row["Current"]) if pd.notna(row["Current"]) else 0
-    
-    fraud_boost = 0
-    
-    # Spike magnitude boosts
-    if abs(pct_change) > 500:
-        fraud_boost += FRAUD_THRESHOLDS["spike_500pct"]
-    elif abs(pct_change) > 200:
-        fraud_boost += FRAUD_THRESHOLDS["spike_200pct"]
-    elif abs(pct_change) > 100:
-        fraud_boost += FRAUD_THRESHOLDS["spike_100pct"]
-    
-    # Novelty boost
-    if is_novel:
-        fraud_boost += 20
-    
-    # Volume impact (higher volume = higher fraud risk potential)
-    if current_val > 100:
-        fraud_boost += min(15, current_val / 100)
-    
-    final_score = min(base_score + fraud_boost, 100)
-    return round(final_score, 1)
 
 
 def _fraud_severity(score: float) -> str:
@@ -342,7 +306,7 @@ def _compute_fraud_score(row):
     if is_novel:
         fraud_boost += 20
     if current_val > 100:
-        fraud_boost += min(15, current_val / 100)
+        fraud_boost += min(15, current_val / 50)
 
     return round(min(base_score + fraud_boost, 100), 1)
 
