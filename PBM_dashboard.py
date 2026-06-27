@@ -322,7 +322,12 @@ new_drugs_ncov = compute_new_drugs_always_ncov(
     drug_df, full_df=drug_df_full, min_claims=THRESHOLDS['new_drug_ncov_min_claims']
 )
 
-insights = gen_insights(drug_df, rejected, code_stats, high_risk)
+insights = gen_insights(
+    drug_df, rejected, code_stats, high_risk,
+    new_drugs_ncov=new_drugs_ncov,
+    payment_anomaly_summary=payment_anomaly_summary,
+    emerging_findings=emerging_findings,
+)
 
 total_rej_amt = rejected['TREAT_REJ_AMT'].sum() if 'TREAT_REJ_AMT' in rejected.columns else 0
 total_est_amt = drug_df['TREAT_EST_AMT'].sum() if 'TREAT_EST_AMT' in drug_df.columns else 0
@@ -795,11 +800,10 @@ with tab5:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    current_month_label = None
     # ── BASELINE STATUS ──────────────────────────────────────────────
     if len(baseline_months_used) == 0:
         st.info(
-            f"📅 **{current_month_label}** is the first month on record. "
+            f"📅 **{emerging_month_label}** is the first month on record. "
             "Month-over-month drift detection will activate once you upload another month. "
             "For now, same-month outlier detection is active."
         )

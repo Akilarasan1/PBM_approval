@@ -20,9 +20,9 @@ from typing import Dict, List, Tuple
 
 # ── FRAUD-SPECIFIC SEVERITY THRESHOLDS ──────────────────────────
 FRAUD_THRESHOLDS = {
-    "spike_p70": 20,
-    "spike_p85": 40,
-    "spike_p95": 70,
+    "signal_p70": 20,
+    "signal_p85": 40,
+    "signal_p95": 70,
 
     "new_entity_min_claims": 5,
     "provider_surge_min_volume": 30,
@@ -83,8 +83,14 @@ FRAUD_SIGNAL_TYPES = {
 # ── EXTRACT FRAUD-RELEVANT FINDINGS ────────────────────────────
 def extract_fraud_spikes(emerging_findings: pd.DataFrame) -> pd.DataFrame:
     """
-    Filter emerging_findings for fraud-signal spikes (>100%, >200%, >500%).
-    
+    Filter emerging_findings for fraud-relevant signals and rank them by a
+    fraud-specific score.
+
+    Note: this works entirely off `Anomaly_Score` (already a plain 0-100
+    number). The engine intentionally doesn't expose raw Pct_Change/ZScore
+    columns to keep findings stakeholder-readable, so fraud scoring here
+    must not depend on them either.
+
     Parameters
     ----------
     emerging_findings : DataFrame
@@ -93,7 +99,7 @@ def extract_fraud_spikes(emerging_findings: pd.DataFrame) -> pd.DataFrame:
     Returns
     -------
     DataFrame
-        Fraud-relevant spikes with additional fraud-specific scoring
+        Fraud-relevant findings with additional fraud-specific scoring
     """
     if emerging_findings.empty:
         return pd.DataFrame()
@@ -114,12 +120,14 @@ def extract_fraud_spikes(emerging_findings: pd.DataFrame) -> pd.DataFrame:
     if findings.empty:
         return pd.DataFrame()
     
+    # How strong is this finding relative to everything else found this
+    # month? A plain rank-percentile of Anomaly_Score — no raw stats needed.
+    findings["Anomaly_Percentile"] = findings["Anomaly_Score"].rank(pct=True) * 100
+
     # Add fraud-specific scoring
     findings["Fraud_Score"] = findings.apply(_compute_fraud_score, axis=1)
     findings["Fraud_Severity"] = findings["Fraud_Score"].apply(_fraud_severity)
     findings["Signal_Type"] = findings.apply(_classify_signal_type, axis=1)
-    findings["Pct_Change_Percentile"] = findings["Pct_Change"].abs().rank(pct=True) * 100
-    findings["Fraud_Score"] = findings.apply(_compute_fraud_score, axis=1)
     
     # Rank by fraud score
     findings = findings.sort_values("Fraud_Score", ascending=False).reset_index(drop=True)
@@ -175,7 +183,7 @@ def _classify_signal_type(row: pd.Series) -> str:
 
 # ── CATEGORIZED EXTRACTION ──────────────────────────────────────
 def extract_diagnosis_spikes(emerging_findings: pd.DataFrame) -> pd.DataFrame:
-    """Extract diagnosis volume spikes with >100%, >200%, >500% flags."""
+    """Extract diagnosis volume spikes, ranked by signal strength."""
     if emerging_findings.empty:
         return pd.DataFrame()
     
@@ -187,14 +195,14 @@ def extract_diagnosis_spikes(emerging_findings: pd.DataFrame) -> pd.DataFrame:
     if findings.empty:
         return pd.DataFrame()
     
-    findings["Spike_Category"] = findings["Pct_Change"].apply(_categorize_spike)
-    findings = findings[findings["Spike_Category"] != "Normal"].copy()
+    findings["Signal_Strength"] = findings["Anomaly_Score"].apply(_categorize_signal_strength)
+    findings = findings[findings["Signal_Strength"] != "Normal (<25)"].copy()
     
-    return findings.sort_values("Pct_Change", ascending=False)
+    return findings.sort_values("Anomaly_Score", ascending=False)
 
 
 def extract_drug_spikes(emerging_findings: pd.DataFrame) -> pd.DataFrame:
-    """Extract drug utilization spikes."""
+    """Extract drug utilization spikes, ranked by signal strength."""
     if emerging_findings.empty:
         return pd.DataFrame()
     
@@ -206,14 +214,14 @@ def extract_drug_spikes(emerging_findings: pd.DataFrame) -> pd.DataFrame:
     if findings.empty:
         return pd.DataFrame()
     
-    findings["Spike_Category"] = findings["Pct_Change"].apply(_categorize_spike)
-    findings = findings[findings["Spike_Category"] != "Normal"].copy()
+    findings["Signal_Strength"] = findings["Anomaly_Score"].apply(_categorize_signal_strength)
+    findings = findings[findings["Signal_Strength"] != "Normal (<25)"].copy()
     
-    return findings.sort_values("Pct_Change", ascending=False)
+    return findings.sort_values("Anomaly_Score", ascending=False)
 
 
 def extract_provider_surges(emerging_findings: pd.DataFrame) -> pd.DataFrame:
-    """Extract provider volume surges."""
+    """Extract provider volume surges, ranked by signal strength."""
     if emerging_findings.empty:
         return pd.DataFrame()
     
@@ -226,8 +234,8 @@ def extract_provider_surges(emerging_findings: pd.DataFrame) -> pd.DataFrame:
     if findings.empty:
         return pd.DataFrame()
     
-    findings["Spike_Category"] = findings["Pct_Change"].apply(_categorize_spike)
-    findings = findings[findings["Spike_Category"] != "Normal"].copy()
+    findings["Signal_Strength"] = findings["Anomaly_Score"].apply(_categorize_signal_strength)
+    findings = findings[findings["Signal_Strength"] != "Normal (<25)"].copy()
     
     return findings.sort_values("Anomaly_Score", ascending=False)
 
@@ -274,34 +282,36 @@ def extract_new_entities(emerging_findings: pd.DataFrame) -> Tuple[pd.DataFrame,
     return new_diagnoses, new_drugs
 
 
-def _categorize_spike(pct_change) -> str:
-    """Categorize spike magnitude."""
-    if pd.isna(pct_change):
+def _categorize_signal_strength(score) -> str:
+    """Categorize signal strength from the plain 0-100 Anomaly_Score —
+    no raw stats needed, matches the same bands anomaly.py uses for
+    Severity so labels stay consistent across the dashboard."""
+    if pd.isna(score):
         return "Unknown"
-    pct = abs(float(pct_change))
-    if pct >= 500:
-        return "Critical (>500%)"
-    elif pct >= 200:
-        return "High (200-500%)"
-    elif pct >= 100:
-        return "Moderate (100-200%)"
+    s = float(score)
+    if s >= 80:
+        return "Critical (80-100)"
+    elif s >= 55:
+        return "High (55-79)"
+    elif s >= 25:
+        return "Moderate (25-54)"
     else:
-        return "Normal (<100%)"
+        return "Normal (<25)"
     
 
 def _compute_fraud_score(row):
     base_score = float(row["Anomaly_Score"]) if pd.notna(row["Anomaly_Score"]) else 0
-    percentile = float(row["Pct_Change_Percentile"]) if pd.notna(row["Pct_Change_Percentile"]) else 0
+    percentile = float(row["Anomaly_Percentile"]) if pd.notna(row["Anomaly_Percentile"]) else 0
     is_novel = bool(row["Novel"]) if pd.notna(row["Novel"]) else False
     current_val = float(row["Current"]) if pd.notna(row["Current"]) else 0
 
     fraud_boost = 0
     if percentile >= 95:
-        fraud_boost += FRAUD_THRESHOLDS["spike_p95"]   # was spike_500pct (80)
+        fraud_boost += FRAUD_THRESHOLDS["signal_p95"]
     elif percentile >= 85:
-        fraud_boost += FRAUD_THRESHOLDS["spike_p85"]   # was spike_200pct (50)
+        fraud_boost += FRAUD_THRESHOLDS["signal_p85"]
     elif percentile >= 70:
-        fraud_boost += FRAUD_THRESHOLDS["spike_p70"]   # was spike_100pct (25)
+        fraud_boost += FRAUD_THRESHOLDS["signal_p70"]
 
     if is_novel:
         fraud_boost += 20
@@ -344,7 +354,7 @@ def build_investigation_queue(emerging_findings: pd.DataFrame,max_findings: int 
         "Entity",
         "Current",
         "Baseline_Mean",
-        "Pct_Change",
+        "Anomaly_Score",
         "Fraud_Score",
         "Fraud_Severity",
         "Reason",
@@ -360,10 +370,8 @@ def build_investigation_queue(emerging_findings: pd.DataFrame,max_findings: int 
         queue["Baseline_Mean"] = queue["Baseline_Mean"].apply(
             lambda x: f"{x:,.1f}" if pd.notna(x) else "N/A"
         )
-    if "Pct_Change" in queue.columns:
-        queue["Pct_Change"] = queue["Pct_Change"].apply(
-            lambda x: f"{x:+.0f}%" if pd.notna(x) else "N/A"
-        )
+    if "Anomaly_Score" in queue.columns:
+        queue["Anomaly_Score"] = queue["Anomaly_Score"].apply(lambda x: f"{x:.0f}/100")
     if "Fraud_Score" in queue.columns:
         queue["Fraud_Score"] = queue["Fraud_Score"].apply(lambda x: f"{x:.0f}/100")
     

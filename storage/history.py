@@ -36,7 +36,7 @@ import re
 
 import pandas as pd
 
-HISTORY_DIR = Path(__file__).parent / "storage/pbm_history"
+HISTORY_DIR = Path(__file__).parent.parent / "pbm_history"
 
 
 # ── MONTH LABELING ──────────────────────────────────────────────
