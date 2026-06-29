@@ -957,6 +957,54 @@ with tab5:
         #     else:
         #         st.info("No provider behavior changes detected.")
 
+        # ── DOCUMENTATION & MEDICAL NECESSITY REJECTION HOTSPOTS ───────────
+        st.markdown('<div class="section-header">📄 Documentation & Medical Necessity Rejections</div>', unsafe_allow_html=True)
+        st.caption(
+            'Keyword-matched across every available rejection-text field, not one exact phrase in '
+            'one column — the same reason is phrased differently across files/months, so a strict '
+            'match would silently miss real cases.'
+        )
+
+        doc_col, mn_col = st.columns(2)
+
+        with doc_col:
+            st.markdown("**Documentation Issues**")
+            doc_matched, doc_summary = compute_rejection_reason_hotspots(
+                drug_df, REJECTION_REASON_KEYWORDS['Documentation']
+            )
+            if not doc_summary.empty:
+                st.markdown(f"""<div class="insight-card warning">
+                    📄 <b>{len(doc_matched)} rejection(s)</b> mention documentation issues this period.
+                </div>""", unsafe_allow_html=True)
+                st.dataframe(doc_summary.head(15), width="stretch", hide_index=True)
+                doc_trend = compute_rejection_reason_monthly_trend(drug_df_full, REJECTION_REASON_KEYWORDS['Documentation'])
+                fig = plot_rejection_reason_trend(doc_trend, 'Documentation rejections by month')
+                if fig:
+                    st.plotly_chart(fig, width="stretch")
+            else:
+                st.info("No documentation-related rejections found this period.")
+
+        with mn_col:
+            st.markdown("**Medical Necessity**")
+            mn_matched, mn_summary = compute_rejection_reason_hotspots(
+                drug_df, REJECTION_REASON_KEYWORDS['Medical Necessity']
+            )
+            if not mn_summary.empty:
+                st.markdown(f"""<div class="insight-card warning">
+                    ⚕️ <b>{len(mn_matched)} rejection(s)</b> cite medical necessity this period.
+                </div>""", unsafe_allow_html=True)
+                st.dataframe(mn_summary.head(15), width="stretch", hide_index=True)
+                mn_trend = compute_rejection_reason_monthly_trend(drug_df_full, REJECTION_REASON_KEYWORDS['Medical Necessity'])
+                fig = plot_rejection_reason_trend(mn_trend, 'Medical necessity rejections by month')
+                if fig:
+                    st.plotly_chart(fig, width="stretch")
+            else:
+                st.info("No medical-necessity rejections found this period.")
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+
+
     else:
         st.success('✅ No critical or warning patterns detected this month.')
 
