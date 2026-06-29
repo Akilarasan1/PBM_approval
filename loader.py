@@ -35,9 +35,24 @@ def process(file_bytes, filename):
     t = time.perf_counter()
     if filename.endswith('.csv'):
         # Read with low_memory=False to avoid mixed-type dtype warnings
-        df = pd.read_csv(io.BytesIO(file_bytes), low_memory=False)
+        start = time.perf_counter()
+        df = pd.read_csv(io.BytesIO(file_bytes),engine="pyarrow")
+        print(f"Read CSV Time: {time.perf_counter()-start:.2f}s")
+
     else:
-        df = pd.read_excel(io.BytesIO(file_bytes))
+        start = time.perf_counter()
+        # df = pd.read_excel(io.BytesIO(file_bytes),engine="calamine")
+        USE_COLS = list(REQUIRED_COLUMNS | OPTIONAL_COLUMNS)
+
+        df = pd.read_excel(
+            io.BytesIO(file_bytes),
+            engine="calamine",
+            usecols=lambda c: c in USE_COLS
+        )
+
+        print(f"Read Excel Time: {time.perf_counter()-start:.2f}s")
+
+        
 
     missing_required, missing_optional = validate_columns(df)
     if missing_required:

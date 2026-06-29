@@ -86,11 +86,9 @@ with st.sidebar:
         try:
 
             t1 = time.perf_counter()
-            print("File Received....!",t1)
-            print("File Enter time.... ", datetime.now())
+            print("\n File Received....!")
             drug_df_full_raw = process(file_bytes, filename)
-            # print(f'File Loaded Time :: {(time.perf_counter() - t1) / 60:.2f} minutes')
-            print("\n Processed Completed .....",datetime.now())
+            
             missing_required, missing_optional = validate_columns(drug_df_full_raw)
             if missing_optional:
                 with st.sidebar.expander("⚠️ Missing Optional Features"):

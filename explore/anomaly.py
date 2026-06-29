@@ -556,7 +556,8 @@ def run_emerging_pattern_scan(current_snapshot, historical, drug_df=None):
     for rule in COMBO_RULES:
         findings.append(detect_combo_novelty(current_snapshot, historical, rule))
 
-    findings = [f for f in findings if f is not None and not f.empty]
+    # findings = [f for f in findings if f is not None and not f.empty]
+    findings = [f for f in findings if f is not None and not f.empty and not f.isna().all().all()]
     if not findings:
         return pd.DataFrame(columns=FINDINGS_COLUMNS[1:])
 

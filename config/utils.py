@@ -248,6 +248,8 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
    drill-down, "Inspect a finding", dimension/severity filters
    (main-content tabs) — the closed control lives in the normal
    component tree, so these selectors reach it everywhere. */
+
+
 [data-baseweb="select"] > div {
     background-color: #161B22 !important;
     border-color: #30363D !important;
@@ -270,28 +272,29 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
    directly to <body> — it is NOT nested inside stSidebar/stSelectbox,
    so none of the rules above can ever reach it. It needs its own
    top-level selector. */
+
+
+   
 [data-baseweb="popover"] [data-baseweb="menu"] {
-    background-color: #161B22 !important;
-}
-[data-baseweb="popover"] li,
-[data-baseweb="popover"] li * {
-    color: #E6EDF3 !important;
-    background-color: transparent !important;
-}
-[data-baseweb="popover"] li:hover,
-[data-baseweb="popover"] li[aria-selected="true"] {
-    background-color: #21262D !important;
+    background-color: #acb2b9 !important;
 }
 
-/* Multiselect selected-item "pills" (e.g. dimension/severity filters
-   in Emerging Patterns) — dark chip with light text/icon. */
-[data-baseweb="tag"] {
-    background-color: #21262D !important;
+
+[data-baseweb="popover"] li,
+[data-baseweb="popover"] li * {
+    color: #000000 !important;
+    -webkit-text-fill-color: #000000 !important;
+    opacity: 1 !important;
 }
-[data-baseweb="tag"] span,
-[data-baseweb="tag"] svg {
-    color: #E6EDF3 !important;
-    fill: #E6EDF3 !important;
+
+[data-baseweb="popover"] li:hover {
+    background-color: #E5E5E5 !important;
+    color: #000000 !important;
+}
+
+[data-baseweb="popover"] li[aria-selected="true"] {
+    background-color: #21262D !important;
+    color: #FFFFFF !important;
 }
 
 
@@ -313,5 +316,22 @@ footer { visibility: hidden;}
 
 /* Alert boxes */
 .stAlert { border-radius: 10px; }
+
+
+/* Spinner / cache message */
+[data-testid="stSpinner"] {
+    color: #000000 !important;
+}
+
+[data-testid="stSpinner"] * {
+    color: #000000 !important;
+    -webkit-text-fill-color: #000000 !important;
+    opacity: 1 !important;
+}
+
+
+
+
 </style>
 """
+
