@@ -36,7 +36,7 @@ def plot_anomaly_scatter(findings):
     fig.add_hline(y=55, line_dash='dash', line_color='#FF8C00',
                   annotation_text='warning', annotation_font_color='#FF8C00')
     fig.update_layout(**PLOT_THEME, height=380, showlegend=True,
-                      xaxis_title='Rank (by severity)', yaxis_title='Anomaly Score')
+                      xaxis_title='Rank (by severity)', yaxis_title='Anomaly Score',title_text="")
     return fig
 
 
@@ -56,7 +56,7 @@ def plot_findings_by_dimension(findings):
             marker_color=sev_colors[sev], marker_line_width=0,
         ))
     fig.update_layout(**PLOT_THEME, height=320, barmode='stack',
-                      xaxis_tickangle=-25, showlegend=True)
+                      xaxis_tickangle=-25, showlegend=True,title_text="")
     return fig
 
 
@@ -83,7 +83,7 @@ def plot_ncov_coverage_trend(trend, drug_code):
         mode='lines+markers', line=dict(color='#FF4444', width=2), marker=dict(size=9),
     ))
     fig.update_layout(**PLOT_THEME, height=300, showlegend=True,
-                      yaxis_title='Claims', title=f'{drug_code} — coverage over time')
+                      yaxis_title='Claims', title=f'{drug_code} — coverage over time',title_text="")
     return fig
 
 
@@ -101,7 +101,7 @@ def plot_rejection_reason_trend(trend_df, label):
         marker_color='#FF8C00', marker_line_width=0,
         text=trend_df['Frequency'], textposition='outside', textfont=dict(color='#E6EDF3'),
     ))
-    fig.update_layout(**PLOT_THEME, height=260, yaxis_title='Rejections', title=label)
+    fig.update_layout(**PLOT_THEME, height=260, yaxis_title='Rejections', title=label,title_text="")
     return fig
  
  

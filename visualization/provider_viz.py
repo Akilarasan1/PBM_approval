@@ -21,7 +21,7 @@ def plot_entity_trend(history_long, entity_label, current_month, current_val, va
         line=dict(color='#388BFD', width=2),
         marker=dict(size=10, color=['#388BFD'] * (len(trend) - 1) + ['#FF4444']),
     ))
-    fig.update_layout(**PLOT_THEME, height=220, title=f'{entity_label} — {value_col} over time')
+    fig.update_layout(**PLOT_THEME, height=220, title=f'{entity_label} — {value_col} over time',title_text="  ")
     return fig
 
 
@@ -53,7 +53,7 @@ def plot_provider_risk_map(prov):
     fig.add_hline(y=30, line_dash='dash', line_color='#FF8C00',
                   annotation_text='30% threshold', annotation_font_color='#FF8C00')
     fig.update_layout(**PLOT_THEME, height=380,
-                      xaxis_title='Total Claims', yaxis_title='Rejection Rate %')
+                      xaxis_title='Total Claims', yaxis_title='Rejection Rate %',title_text="  ")
     return fig
 
 
@@ -80,10 +80,13 @@ def plot_rejection_codes_volume_financial(code_stats):
         marker=dict(size=8, color='#FFC107'),
     ), secondary_y=True)
     
-    fig.update_layout(**PLOT_THEME, showlegend=True)
+    fig.update_layout(**PLOT_THEME, showlegend=True, title_text = " ")
     fig.update_yaxes(title_text='Claims', secondary_y=False,
                      gridcolor='#21262D', tickfont=dict(color='#8B949E'))
     fig.update_yaxes(title_text='Rejected Amount', secondary_y=True,
                      gridcolor='#21262D', tickfont=dict(color='#8B949E'))
+    
+
+
     return fig
 

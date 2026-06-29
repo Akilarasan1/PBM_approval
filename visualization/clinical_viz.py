@@ -19,7 +19,7 @@ def plot_high_risk_combos(high_risk):
     fig.add_hline(y=70, line_dash='dash', line_color='#FF8C00',
                   annotation_text='70% threshold', annotation_font_color='#FF8C00')
     fig.update_layout(**PLOT_THEME, height=380, xaxis_tickangle=-45,
-                      yaxis_title='Rejection Rate %')
+                      yaxis_title='Rejection Rate %', title_text="")
     return fig
 
 
@@ -72,7 +72,7 @@ def plot_diagnosis_drug_sankey(matrix):
         link=dict(source=sources, target=targets, value=values, color=colors),
     ))
     theme = {**PLOT_THEME, 'font': dict(color='#E6EDF3', size=11, family='Inter')}
-    fig.update_layout(**theme, height=520)
+    fig.update_layout(**theme, height=520,title_text="")
     return fig
 
 def plot_diagnosis_drug_heatmap(matrix):
@@ -89,7 +89,7 @@ def plot_diagnosis_drug_heatmap(matrix):
         hovertemplate='Diagnosis: %{y}<br>Drug: %{x}<br>Rej Rate: %{z:.1f}%<extra></extra>',
     ))
     fig.update_layout(**PLOT_THEME, height=460, xaxis_tickangle=-45,
-                      xaxis_title='Drug Code', yaxis_title='Diagnosis')
+                      xaxis_title='Drug Code', yaxis_title='Diagnosis',title_text="")
     return fig
 
 
@@ -108,7 +108,7 @@ def plot_age_violations(child_v):
         text=age_breakdown['Violations'], textposition='outside',
         textfont=dict(color='#E6EDF3')
     ))
-    fig.update_layout(**PLOT_THEME, height=220)
+    fig.update_layout(**PLOT_THEME, height=220,title_text="")
     return fig
 
 

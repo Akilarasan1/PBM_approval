@@ -179,33 +179,76 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 
 
 
-/* Upload box */
+/* File Uploader */
 [data-testid="stFileUploader"] {
     background-color: #161B22 !important;
     border: 2px dashed #388BFD !important;
     border-radius: 12px !important;
     padding: 20px !important;
+    transition: all 0.2s ease-in-out;
 }
 
-/* Inner drop area */
+/* Hover effect */
+[data-testid="stFileUploader"]:hover {
+    border-color: #E6EDF3 !important;
+    background-color: #1C2128 !important;
+}
+
+/* Inner upload area */
 [data-testid="stFileUploader"] section {
-    background-color: #161B22 !important;
+    background-color: transparent !important;
 }
 
 /* Upload text */
 [data-testid="stFileUploader"] label,
 [data-testid="stFileUploader"] p,
 [data-testid="stFileUploader"] span,
-[data-testid="stFileUploader"] div { color: #E6EDF3 !important; font-weight: 500 !important;}
+[data-testid="stFileUploader"] div {
+    color: #5183ad !important;
+    -webkit-text-fill-color: #b2d0e7 !important;
+    opacity: 1 !important;
+    font-weight: 500 !important;
+}
+
+
+
+/* Uploaded filename */
+[data-testid="stFileChipName"] {
+    color: #5183ad !important;
+    -webkit-text-fill-color: #E6EDF3 !important;
+    opacity: 1 !important;
+    font-weight: 500 !important;
+}
+
+
 
 /* Browse files button */
 [data-testid="stFileUploader"] button {
     background-color: #21262D !important;
     color: #E6EDF3 !important;
     border: 1px solid #388BFD !important;
+    border-radius: 8px !important;
+    transition: all 0.2s ease-in-out;
+}
+
+[data-testid="stFileUploader"] button:hover {
+    background-color: #E6EDF3 !important;
+    border-color: #E6EDF3 !important;
+}
+
+/* Button hover */
+[data-testid="stFileUploader"] button:hover {
+    background-color: #30363D !important;
+    border-color: #E6EDF3 !important;
+}
+
+/* Uploaded file name */
+[data-testid="stFileUploader"] small,
+[data-testid="stFileUploader"] code {
+    color: #E6EDF3 !important;
 }
    
-
+#==========================================
 
 
 /* Selectbox and all input labels - aggressive targeting */

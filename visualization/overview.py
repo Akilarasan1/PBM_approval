@@ -33,8 +33,9 @@ def plot_mnec_breakdown(mnec_df):
 
     fig.update_layout(**PLOT_THEME, height=280,
                       annotations=[dict(text='MNEC', x=0.5, y=0.5,
-                                       font_size=16, font_color='#E6EDF3',
-                                       showarrow=False)])
+                                       font_size=16, font_color='#E6EDF3', 
+                                       showarrow=False)
+                                       ],title_text = " ")
     return fig
 
 
@@ -55,7 +56,7 @@ def plot_gender_rejection_rate(drug_df):
         textposition='outside', textfont=dict(color='#E6EDF3'),
         marker_line_width=0,
     ))
-    fig.update_layout(**PLOT_THEME, height=260, yaxis_title='Rejection Rate %')
+    fig.update_layout(**PLOT_THEME, height=260, yaxis_title='Rejection Rate %',title_text="")
     return fig
 
 
@@ -80,7 +81,7 @@ def plot_age_rejection_rate(drug_df):
     ))
     fig.update_layout(**PLOT_THEME, height=260,
                       yaxis_title='Rejection Rate %',
-                      xaxis_tickangle=-30)
+                      xaxis_tickangle=-30,title_text="")
     return fig
 
 
@@ -98,7 +99,7 @@ def plot_rejected_amount_by_code(code_stats):
         textposition='outside', textfont=dict(color='#E6EDF3', size=11),
         marker_line_width=0,
     ))
-    fig.update_layout(**PLOT_THEME, height=360, xaxis_title='Rejected Amount')
+    fig.update_layout(**PLOT_THEME, height=360, xaxis_title='Rejected Amount',title_text="")
     return fig
 
 
@@ -126,7 +127,7 @@ def plot_amount_distribution_treemap(code_stats):
         hovertemplate='<b>%{label}</b><br>%{customdata[0]}<br>Claims: %{customdata[1]:,}<br>Amount: %{value:,.0f}',
         textfont=dict(color='#E6EDF3', size=13)
     )
-    fig.update_layout(**PLOT_THEME, height=360, coloraxis_showscale=False)
+    fig.update_layout(**PLOT_THEME, height=360, coloraxis_showscale=False,title_text="")
     return fig
 
 
@@ -158,7 +159,7 @@ def plot_top_rejected_drugs(rejected):
         text=drug_amt['Total_Amt'].apply(lambda x: f'{x:,.0f}'),
         textposition='outside', textfont=dict(color='#E6EDF3', size=11)
     ))
-    fig.update_layout(**PLOT_THEME, height=420, xaxis_title='Total Rejected Amount')
+    fig.update_layout(**PLOT_THEME, height=420, xaxis_title='Total Rejected Amount',title_text=" ")
     return fig
 
 
@@ -186,7 +187,7 @@ def plot_provider_volume_and_rejection(prov):
         yaxis=dict(title='Claims', gridcolor='#21262D', tickfont=dict(color='#8B949E')),
         yaxis2=dict(title='Rejection Rate %', overlaying='y', side='right',
                     gridcolor='#21262D', tickfont=dict(color='#8B949E')),
-        xaxis_tickangle=-45, showlegend=True
+        xaxis_tickangle=-45, showlegend=True,title_text=" "
     )
     return fig
 
@@ -219,7 +220,7 @@ def plot_weekly_trends(weekly):
         ),
         secondary_y=True,
     )
-    fig.update_layout(**PLOT_THEME, height=320, showlegend=True)
+    fig.update_layout(**PLOT_THEME, height=320, showlegend=True,title_text="")
     fig.update_yaxes(title_text='Claims', secondary_y=False, gridcolor='#21262D')
     fig.update_yaxes(title_text='Rejection Rate %', secondary_y=True, gridcolor='#21262D')
     fig.update_xaxes(tickangle=-30)
@@ -240,7 +241,7 @@ def plot_service_type_rejection(service_type_stats):
         text=[f"{r:.1f}% (n={c:,})" for r, c in zip(service_type_stats['RejRate_%'], service_type_stats['Claims'])],
         textposition='outside', textfont=dict(color='#E6EDF3'),
     ))
-    fig.update_layout(**PLOT_THEME, height=300, yaxis_title='Rejection Rate %')
+    fig.update_layout(**PLOT_THEME, height=300, yaxis_title='Rejection Rate %',title_text="")
     return fig
 
 
@@ -257,7 +258,7 @@ def plot_service_type_monthly_trend(trend):
             mode='lines+markers', line=dict(color=colors.get(stype, '#607D8B'), width=2),
             marker=dict(size=8),
         ))
-    fig.update_layout(**PLOT_THEME, height=300, showlegend=True, yaxis_title='Rejection Rate %')
+    fig.update_layout(**PLOT_THEME, height=300, showlegend=True, yaxis_title='Rejection Rate %',title_text="")
     return fig
 
 
@@ -275,7 +276,7 @@ def plot_quantity_bands(band_stats):
         x=band_stats['Band'], y=band_stats['Rejection_Rate_%'], name='Rejection Rate %',
         mode='lines+markers', line=dict(color='#FF4444', width=2), marker=dict(size=9),
     ), secondary_y=True)
-    fig.update_layout(**PLOT_THEME, height=320, showlegend=True)
+    fig.update_layout(**PLOT_THEME, height=320, showlegend=True,title_text=" ")
     fig.update_yaxes(title_text='Claims', secondary_y=False, gridcolor='#21262D')
     fig.update_yaxes(title_text='Rejection Rate %', secondary_y=True, gridcolor='#21262D')
     return fig
