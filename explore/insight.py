@@ -54,6 +54,10 @@ def gen_insights(drug_df, rejected, code_stats, high_risk,
     new_drugs_ncov_rule,
     payment_anomaly_rule,
     emerging_patterns_rule,
+    documentation_rejection_rule,
+    medical_necessity_rule,
+    service_type_rule,
+    quantity_impact_rule,
 ]
 
     """
@@ -78,6 +82,79 @@ def gen_insights(drug_df, rejected, code_stats, high_risk,
         insights.extend(rule(context))
     
     return insights
+
+
+
+def documentation_rejection_rule(ctx):
+    """Flag documentation-related rejection hotspots."""
+    from explore.stats import compute_rejection_reason_hotspots, REJECTION_REASON_KEYWORDS
+    drug_df = ctx['drug_df']
+
+    matched, summary = compute_rejection_reason_hotspots(drug_df, REJECTION_REASON_KEYWORDS['Documentation'])
+    if matched.empty:
+        return []
+
+    top_n = len(summary)
+    return [('warning',
+            f'📄 {len(matched):,} rejection(s) cite documentation issues, across {top_n} '
+            f'diagnosis/drug/provider combination(s) → see Fraud & Safety for the breakdown.')]
+
+
+def medical_necessity_rule(ctx):
+    """Flag treatment codes repeatedly rejected as medically unnecessary."""
+    from explore.stats import compute_rejection_reason_hotspots, REJECTION_REASON_KEYWORDS
+    drug_df = ctx['drug_df']
+
+    matched, summary = compute_rejection_reason_hotspots(drug_df, REJECTION_REASON_KEYWORDS['Medical Necessity'])
+    if matched.empty:
+        return []
+
+    repeat_drugs = summary.groupby('DRUG_CODE')['Frequency'].sum() if 'DRUG_CODE' in summary.columns else None
+    repeat_n = int((repeat_drugs > 1).sum()) if repeat_drugs is not None else 0
+
+    msg = f'⚕️ {len(matched):,} rejection(s) cite medical necessity'
+    if repeat_n > 0:
+        msg += f', including {repeat_n} drug(s) with repeated denials'
+    msg += ' → see Fraud & Safety for the breakdown.'
+    return [('warning', msg)]
+
+
+def service_type_rule(ctx):
+    """Compare outpatient vs inpatient rejection rates; flag a meaningful gap."""
+    from explore.patient import compute_service_type_stats
+    drug_df = ctx['drug_df']
+
+    stats = compute_service_type_stats(drug_df)
+    if stats.empty or len(stats) < 2:
+        return []
+
+    stats_sorted = stats.sort_values('RejRate_%', ascending=False)
+    highest, lowest = stats_sorted.iloc[0], stats_sorted.iloc[-1]
+    gap = highest['RejRate_%'] - lowest['RejRate_%']
+
+    if gap >= 10 and lowest['Claims'] >= 50:
+        return [('info',
+                f"🏨 {highest['Service_Type']} claims reject at {highest['RejRate_%']:.1f}% vs "
+                f"{lowest['Service_Type']} at {lowest['RejRate_%']:.1f}% ({gap:.0f} point gap) → "
+                f"see Overview for the trend.")]
+    return []
+
+
+def quantity_impact_rule(ctx):
+    """Flag drugs where higher prescribed quantity meaningfully raises rejection odds."""
+    from explore.patient import compute_quantity_rejection_by_drug
+    drug_df = ctx['drug_df']
+
+    qty_by_drug = compute_quantity_rejection_by_drug(drug_df, min_claims_per_band=5, min_delta=15.0)
+    if qty_by_drug.empty:
+        return []
+
+    top = qty_by_drug.iloc[0]
+    return [('warning',
+            f"📦 {len(qty_by_drug)} drug(s) reject more often at higher quantities — worst: "
+            f"{top['DRUG_CODE']} ({top['Lowest_Band_RejRate_%']:.0f}% at qty {top['Lowest_Band']} → "
+            f"{top['Highest_Band_RejRate_%']:.0f}% at qty {top['Highest_Band']}) → see Overview for details.")]
+
 
 
 # Updated rules to accept context dictionary

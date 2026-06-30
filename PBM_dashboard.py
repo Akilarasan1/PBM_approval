@@ -144,11 +144,61 @@ with st.sidebar:
             age_opts = ['All'] + sorted(drug_df_full_raw['AGE_GROUP'].dropna().unique().tolist()) if 'AGE_GROUP' in drug_df_full_raw.columns else ['All']
             sel_age = st.selectbox('Age Group', age_opts)
 
+
+            # ── FILTER OPTIONS (derived from the full unfiltered upload) ─
+            st.markdown("---")
+            st.markdown('<div class="section-header">Filters</div>', unsafe_allow_html=True)
+
+            gender_opts = ['All'] + sorted(drug_df_full_raw['MEM_GENDER'].dropna().unique().tolist()) if 'MEM_GENDER' in drug_df_full_raw.columns else ['All']
+            sel_gender = st.selectbox('Gender', gender_opts, key='filter_gender')
+
+            age_opts = ['All'] + sorted(drug_df_full_raw['AGE_GROUP'].dropna().unique().tolist()) if 'AGE_GROUP' in drug_df_full_raw.columns else ['All']
+            sel_age = st.selectbox('Age Group', age_opts, key='filter_age')
+
+            service_type_opts = sorted(drug_df_full_raw['SERVICE_TYPE'].dropna().unique().tolist()) if 'SERVICE_TYPE' in drug_df_full_raw.columns else []
+            sel_service_types = st.multiselect('Service Type', service_type_opts, key='filter_service_type')
+
+            rej_reason_opts = sorted(drug_df_full_raw['REJ_CODE_PREFIX'].dropna().unique().tolist()) if 'REJ_CODE_PREFIX' in drug_df_full_raw.columns else []
+            sel_rej_reasons = st.multiselect('Rejection Reason', rej_reason_opts, key='filter_rej_reason')
+
+            provider_opts = sorted(drug_df_full_raw['DOC_LIC_NO'].dropna().unique().tolist()) if 'DOC_LIC_NO' in drug_df_full_raw.columns else []
+            sel_providers = st.multiselect('Provider', provider_opts, key='filter_provider')
+
+            diag_opts = sorted(drug_df_full_raw['PA_PRIMARY_DIAG'].dropna().unique().tolist()) if 'PA_PRIMARY_DIAG' in drug_df_full_raw.columns else []
+            sel_diagnoses = st.multiselect('Diagnosis Code', diag_opts, key='filter_diagnosis')
+
+            treatment_opts = sorted(drug_df_full_raw['DRUG_CODE'].dropna().unique().tolist()) if 'DRUG_CODE' in drug_df_full_raw.columns else []
+            sel_treatments = st.multiselect('Treatment Code', treatment_opts, key='filter_treatment')
+
+            date_range_value = None
+            if 'SERVICE_DT' in drug_df_full_raw.columns and drug_df_full_raw['SERVICE_DT'].notna().any():
+                min_dt = drug_df_full_raw['SERVICE_DT'].min().date()
+                max_dt = drug_df_full_raw['SERVICE_DT'].max().date()
+                date_range_value = st.date_input(
+                    'Date Range', value=(min_dt, max_dt), min_value=min_dt, max_value=max_dt,
+                    key='filter_date_range',
+                )
+
             def _apply_filters(df):
                 if sel_gender != 'All' and 'MEM_GENDER' in df.columns:
                     df = df[df['MEM_GENDER'] == sel_gender]
                 if sel_age != 'All' and 'AGE_GROUP' in df.columns:
                     df = df[df['AGE_GROUP'] == sel_age]
+                if sel_service_types and 'SERVICE_TYPE' in df.columns:
+                    df = df[df['SERVICE_TYPE'].isin(sel_service_types)]
+                if sel_rej_reasons and 'REJ_CODE_PREFIX' in df.columns:
+                    df = df[df['REJ_CODE_PREFIX'].isin(sel_rej_reasons)]
+                if sel_providers and 'DOC_LIC_NO' in df.columns:
+                    df = df[df['DOC_LIC_NO'].isin(sel_providers)]
+                if sel_diagnoses and 'PA_PRIMARY_DIAG' in df.columns:
+                    df = df[df['PA_PRIMARY_DIAG'].isin(sel_diagnoses)]
+                if sel_treatments and 'DRUG_CODE' in df.columns:
+                    df = df[df['DRUG_CODE'].isin(sel_treatments)]
+                if date_range_value and len(date_range_value) == 2 and 'SERVICE_DT' in df.columns:
+                    start_d, end_d = date_range_value
+                    df = df[
+                        (df['SERVICE_DT'].dt.date >= start_d) & (df['SERVICE_DT'].dt.date <= end_d)
+                    ]
                 return df
 
             # drug_df_full = entire uploaded range, filtered — drives the
