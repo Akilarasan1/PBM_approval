@@ -134,17 +134,7 @@ with st.sidebar:
             # month — in Overall view that's the most recent one uploaded.
             emerging_month_label = latest_month_label if is_overall else selected_period
 
-            # ── FILTER OPTIONS (derived from the full unfiltered upload) ─
-            st.markdown("---")
-            st.markdown('<div class="section-header">Filters</div>', unsafe_allow_html=True)
-
-            gender_opts = ['All'] + sorted(drug_df_full_raw['MEM_GENDER'].dropna().unique().tolist()) if 'MEM_GENDER' in drug_df_full_raw.columns else ['All']
-            sel_gender = st.selectbox('Gender', gender_opts)
-
-            age_opts = ['All'] + sorted(drug_df_full_raw['AGE_GROUP'].dropna().unique().tolist()) if 'AGE_GROUP' in drug_df_full_raw.columns else ['All']
-            sel_age = st.selectbox('Age Group', age_opts)
-
-
+        
             # ── FILTER OPTIONS (derived from the full unfiltered upload) ─
             st.markdown("---")
             st.markdown('<div class="section-header">Filters</div>', unsafe_allow_html=True)
