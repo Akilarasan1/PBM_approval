@@ -1157,25 +1157,25 @@ with tab5:
                 cols = [c for c in ['DRUG_CODE', 'DRUG_NAME', 'DOC_LIC_NO', 'REJ_CODE_PREFIX',
                                     'TREAT_EST_AMT', 'TREAT_APPR_AMT', 'TREAT_REJ_AMT', 'SERVICE_DT']
                         if c in rp.columns]
-                st.dataframe(rp[cols].sort_values('TREAT_APPR_AMT', ascending=False), width = "stretch",
+                st.dataframe(rp[cols].sort_values('TREAT_APPR_AMT', ascending=False), width = "stretch", # type: ignore
                                hide_index=True)
 
         if payment_anomaly_summary['genuine_overpayment_count'] > 0:
             with st.expander(f"🟠 potential_overpayment - paid more than requested ({payment_anomaly_summary['genuine_overpayment_count']:,})"):
                 go = payment_anomalies['genuine_overpayment']
-                cols = [c for c in ['DRUG_CODE', 'DRUG_NAME', 'DOC_LIC_NO',
+                cols = [c for c in ['DRUG_CODE', 'DRUG_NAME', 'DOC_LIC_NO','REJ_CODE_PREFIX',
                                     'TREAT_EST_AMT', 'TREAT_APPR_AMT', 'Excess_Amt', 'SERVICE_DT']
                         if c in go.columns]
-                st.dataframe(go[cols].sort_values('Excess_Amt', ascending=False),
+                st.dataframe(go[cols].sort_values('Excess_Amt', ascending=False), # pyright: ignore[reportCallIssue]
                             width = "stretch" ,hide_index=True)
 
         if payment_anomaly_summary['zero_requested_count'] > 0:
             with st.expander(f"🔵 Paid with $0 requested — likely missing source value ({payment_anomaly_summary['zero_requested_count']:,})"):
                 zr = payment_anomalies['zero_requested']
-                cols = [c for c in ['DRUG_CODE', 'DRUG_NAME', 'DOC_LIC_NO',
+                cols = [c for c in ['DRUG_CODE', 'DRUG_NAME', 'DOC_LIC_NO','REJ_CODE_PREFIX',
                                     'TREAT_EST_AMT', 'TREAT_APPR_AMT', 'SERVICE_DT']
                         if c in zr.columns]
-                st.dataframe(zr[cols].sort_values('TREAT_APPR_AMT', ascending=False),
+                st.dataframe(zr[cols].sort_values('TREAT_APPR_AMT', ascending=False), # type: ignore
                             width = "stretch", hide_index=True)
     else:
         st.success('No payment integrity anomalies found this month.')
