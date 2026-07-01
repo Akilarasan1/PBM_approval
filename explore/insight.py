@@ -152,8 +152,8 @@ def quantity_impact_rule(ctx):
     top = qty_by_drug.iloc[0]
     return [('warning',
             f"📦 {len(qty_by_drug)} drug(s) reject more often at higher quantities — worst: "
-            f"{top['DRUG_CODE']} ({top['Lowest_Band_RejRate_%']:.0f}% at qty {top['Lowest_Band']} → "
-            f"{top['Highest_Band_RejRate_%']:.0f}% at qty {top['Highest_Band']}) → see Overview for details.")]
+            f"{top['DRUG_CODE']} ({top['Rejection Rate (Lowest Quantity)']:.0f}% at qty {top['Lowest Quantity Range']} → "
+            f"{top['Rejection Rate (Highest Quantity)']:.0f}% at qty {top['Highest Quantity Range']}) → see Overview for details.")]
 
 
 

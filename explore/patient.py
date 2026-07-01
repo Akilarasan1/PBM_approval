@@ -148,14 +148,14 @@ def compute_quantity_rejection_by_drug(drug_df, min_claims_per_band=5, min_delta
         if delta >= min_delta:
             rows.append({
                 'DRUG_CODE': drug,
-                'Lowest_Band': lowest['Band'],
-                'Lowest_Band_RejRate_%': lowest['RejRate_%'],
-                'Highest_Band': highest['Band'],
-                'Highest_Band_RejRate_%': highest['RejRate_%'],
-                'Delta_Pts': round(delta, 1),
+                'Lowest Quantity Range': lowest['Band'],
+                'Rejection Rate (Lowest Quantity)': lowest['RejRate_%'],
+                'Highest Quantity Range': highest['Band'],
+                'Rejection Rate (Highest Quantity)': highest['RejRate_%'],
+                'Increase in Rejection Rate (%)': round(delta, 1),
                 'Total_Claims': int(g['Claims'].sum()),
             })
 
     if not rows:
         return pd.DataFrame()
-    return pd.DataFrame(rows).sort_values('Delta_Pts', ascending=False).reset_index(drop=True)
+    return pd.DataFrame(rows).sort_values('Increase in Rejection Rate (%)', ascending=False).reset_index(drop=True)

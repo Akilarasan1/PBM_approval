@@ -416,12 +416,17 @@ with tab1:
         for sev, msg in insights:
             st.markdown(f'<div class="insight-card {sev}">{msg}</div>', unsafe_allow_html=True)
 
-    st.markdown('<div class="section-header">Rejection Code Breakdown</div>', unsafe_allow_html=True)
+    st.markdown("""
+        <span title="Shows how frequently each rejection code occurs, its financial impact, and its contribution to total rejected claims.">
+            <b>Rejection Code Breakdown ⓘ</b>
+        </span>
+        """, unsafe_allow_html=True)
+    
     display_df = code_stats.copy()
     display_df['Rejected_Amt'] = display_df['Rejected_Amt'].apply(lambda x: f'{x:,.0f}')
     display_df['Count'] = display_df['Count'].apply(lambda x: f'{x:,}')
     display_df['Pct'] = display_df['Pct'].apply(lambda x: f'{x:.1f}%')
-    display_df.columns = ['Code', 'Claims', 'Rejected Amt', '% of Rejections', 'Description']
+    display_df.columns = ['Code', 'Total_Count_Claims', 'Rejected Amt', 'Percent% of Rejections', 'Description']
     st.dataframe(display_df,  width="stretch", hide_index=True)
 
     # if not weekly_trends.empty:
@@ -499,7 +504,15 @@ with tab1:
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── QUANTITY IMPACT ───────────────────────────────────────────────────
-    st.markdown('<div class="section-header">📦 Quantity Impact</div>', unsafe_allow_html=True)
+    st.markdown("""
+        <span title="
+        Analyzes whether the prescribed quantity of a drug is associated with a higher rejection rate.
+        Claims are grouped into quantity ranges and their approval and rejection rates are compared.
+        Drugs highlighted below show a significantly higher rejection rate at larger prescribed quantities, which may indicate quantity limits, policy restrictions, or prior authorization requirements.
+        ">
+            <b>📦 Quantity Impact ⓘ</b>
+        </span>
+        """, unsafe_allow_html=True)
     st.caption('Does prescribing a higher quantity change the odds of rejection?')
     qty_bands = compute_quantity_bands(drug_df)
     if not qty_bands.empty:
@@ -528,11 +541,28 @@ with tab1:
 with tab2:
     f1, f2, f3 = st.columns(3)
     with f1:
-        st.markdown(f"""<div class="metric-card red">
-            <div class="metric-label">Total Rejected Amount</div>
-            <div class="metric-value">{total_rej_amt:,.0f}</div>
-            <div class="metric-sub">{total_rej_amt/total_est_amt*100:.1f}% of estimated</div>
-        </div>""", unsafe_allow_html=True)
+        if (
+            total_est_amt is None
+            or pd.isna(total_est_amt)
+            or np.isclose(total_est_amt, 0)
+        ):
+            percent = 0
+        else:
+            if (
+                pd.isna(total_est_amt)
+                or np.isclose(total_est_amt, 0)
+            ):
+                percent = 0.0
+            else:
+                percent = (total_rej_amt / total_est_amt) * 100
+
+            st.markdown(f"""
+            <div class="metric-card red">
+                <div class="metric-label">Total Rejected Amount</div>
+                <div class="metric-value">{total_rej_amt:,.0f}</div>
+                <div class="metric-sub">{percent:.1f}% of estimated</div>
+            </div>
+            """, unsafe_allow_html=True)
     with f2:
         st.markdown(f"""<div class="metric-card green">
             <div class="metric-label">Total Approved Amount</div>
@@ -565,11 +595,20 @@ with tab2:
 # TAB 3 — COMBOS
 # ════════════════════════════════════════════════════
 with tab3:
-    st.markdown(
-        f'<div class="section-header">High Risk Drug-Diagnosis Combinations '
-        f'(>{THRESHOLDS["combo_high_risk_rate"]}% rejection, min {THRESHOLDS["combo_min_claims"]} claims)</div>',
-        unsafe_allow_html=True,
-    )
+    # st.markdown(
+    #     f'<div class="section-header">High Risk Drug-Diagnosis Combinations '
+    #     f'(>{THRESHOLDS["combo_high_risk_rate"]}% rejection, min {THRESHOLDS["combo_min_claims"]} claims)</div>',
+    #     unsafe_allow_html=True,
+    # )
+    st.markdown("""
+            <span title="Shows Drug-Diagnosis combinations with consistently high rejection rates. These combinations may require additional review, supporting documentation, or changes in prescribing practices.">
+                <div class="section-header">
+                    High Risk Drug-Diagnosis Combinations ⓘ
+                </div>
+            </span>
+            """, unsafe_allow_html=True)
+
+
     if len(high_risk) > 0:
         fig = plot_high_risk_combos(high_risk)
         if fig:
@@ -585,7 +624,12 @@ with tab3:
             f'>{THRESHOLDS["combo_high_risk_rate"]}% rejection).'
         )
 
-    with st.expander("Gray area combos (30–70% rejection)"):
+    with st.expander("🟡 Gray Area Combos (30–70% rejection) ⓘ"):
+        st.caption(
+            "These Drug-Diagnosis combinations have moderate rejection rates. "
+            "Some claims are approved while others are rejected, indicating inconsistent outcomes that may require further investigation."
+        )
+
         if len(gray_combos) > 0:
             st.dataframe(
                 enrich_combo_display(gray_combos, drug_df).head(20),
@@ -595,7 +639,11 @@ with tab3:
         else:
             st.info('No gray area combos found.')
 
-    with st.expander("Safe combos (0% rejection — reference only)"):
+    with st.expander("🟢 Safe Combos (0% rejection — Reference Only) ⓘ"):
+        st.caption(
+            "Drug-Diagnosis combinations with no rejected claims during the selected period. "
+            "These combinations are shown as a reference and do not guarantee future approvals."
+        )
         if len(safe_combos) > 0:
             st.dataframe(
                 enrich_combo_display(safe_combos, drug_df).head(20),
@@ -609,20 +657,29 @@ with tab3:
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── DIAGNOSIS × TREATMENT vs OUTCOME ────────────────────────────────
-    st.markdown('<div class="section-header">🔀 Diagnosis × Treatment vs Outcome</div>', unsafe_allow_html=True)
+    st.markdown("""
+        <span title="Shows which drugs are most commonly prescribed for each diagnosis and how often those diagnosis-drug combinations are approved or rejected.">
+            <div class="section-header">🔀 Diagnosis × Treatment vs Outcome ⓘ</div>
+        </span>
+        """, unsafe_allow_html=True)
+
     st.caption(
-        'Are rejections driven more by the treatment than the diagnosis? Restricted to the '
-        'top 15 diagnoses and top 15 drugs by volume for readability — '
-        'this is a pattern view, not full coverage of every claim.'
-    )
+            "Restricted to the top 15 diagnoses and top 15 drugs by claim volume for readability. "
+            "This visualization highlights treatment patterns rather than every individual claim."
+        )
 
     diag_drug_matrix = compute_diagnosis_treatment_matrix(drug_df, top_n_diag=15, top_n_drug=15)
     if not diag_drug_matrix.empty:
         sankey_fig = plot_diagnosis_drug_sankey(diag_drug_matrix)
         if sankey_fig:
             st.plotly_chart(sankey_fig, width="stretch")
-
-        st.markdown('<div class="section-header">Diagnosis vs Drug — Rejection Rate Heatmap</div>', unsafe_allow_html=True)
+        
+        
+        st.markdown("""
+            <span title="Shows the rejection rate for each Diagnosis and Drug combination. Darker colors indicate higher rejection rates, helping identify combinations that are more likely to be rejected.">
+                <div class="section-header">Diagnosis vs Drug — Rejection Rate Heatmap ⓘ</div>
+            </span>
+            """, unsafe_allow_html=True)
         heatmap_fig = plot_diagnosis_drug_heatmap(diag_drug_matrix)
         if heatmap_fig:
             st.plotly_chart(heatmap_fig, width="stretch")
@@ -632,7 +689,12 @@ with tab3:
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── SAME DIAGNOSIS, DIFFERENT OUTCOME ───────────────────────────────
-    st.markdown('<div class="section-header">⚖️ Same Diagnosis, Different Outcome</div>', unsafe_allow_html=True)
+    st.markdown("""
+        <span title="The same diagnosis resulted in both approved and rejected claims. This helps identify whether the prescribed drug or the rejection reason influenced the claim outcome.">
+            <div class="section-header">⚖️ Same Diagnosis, Different Outcome ⓘ</div>
+        </span>
+        """, unsafe_allow_html=True)
+    
     st.caption('Diagnoses where the exact same diagnosis led to BOTH approved and rejected claims — with which drugs landed on which side.')
 
     mixed_outcome = compute_mixed_outcome_diagnoses(drug_df, min_claims=20)
@@ -642,7 +704,12 @@ with tab3:
         </div>""", unsafe_allow_html=True)
         st.dataframe(mixed_outcome.head(30), width="stretch", hide_index=True)
 
-        st.markdown('<div class="section-header">Claim-Level Drill-Down</div>', unsafe_allow_html=True)
+        st.markdown("""
+        <span title="View individual claims for the selected diagnosis, including the prescribed drug, provider, approval status, rejection code, and claim amounts.">
+            <div class="section-header">📋 Claim Details ⓘ</div>
+        </span>
+        """, unsafe_allow_html=True)
+
         diag_options = mixed_outcome['PA_PRIMARY_DIAG'].head(30).tolist()
         selected_diag = st.selectbox('Select a diagnosis to see individual claims:', diag_options)
         if selected_diag:
@@ -682,12 +749,19 @@ with tab4:
                 <div class="metric-sub">&gt;{THRESHOLDS['provider_flag_rate']}% rejection, min {THRESHOLDS['provider_flag_min_claims']} claims</div>
             </div>""", unsafe_allow_html=True)
         with p3:
-            top_prov = prov.sort_values('RejAmt', ascending=False).iloc[0]
-            st.markdown(f"""<div class="metric-card amber">
-                <div class="metric-label">Highest Rejected Amt</div>
-                <div class="metric-value">{top_prov['RejAmt']:,.0f}</div>
-                <div class="metric-sub">Provider {top_prov['DOC_LIC_NO']}</div>
-            </div>""", unsafe_allow_html=True)
+            if not prov.empty:
+                top_prov = prov.sort_values('RejAmt', ascending=False).iloc[0]
+                st.markdown(f"""<div class="metric-card amber">
+                    <div class="metric-label">Highest Rejected Amt</div>
+                    <div class="metric-value">{top_prov['RejAmt']:,.0f}</div>
+                    <div class="metric-sub">Provider {top_prov['DOC_LIC_NO']}</div>
+                </div>""", unsafe_allow_html=True)
+            else:
+                st.markdown(f"""<div class="metric-card amber">
+                    <div class="metric-label">Highest Rejected Amt</div>
+                    <div class="metric-value">—</div>
+                    <div class="metric-sub">No provider data for this selection</div>
+                </div>""", unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
 
@@ -707,7 +781,7 @@ with tab4:
                 flagged_show = flagged_provs.sort_values('RejRate', ascending=False)[
                     ['DOC_LIC_NO', 'Claims', 'RejRate', 'RejAmt']
                 ]
-                flagged_show.columns = ['Provider', 'Claims', 'Rej Rate %', 'Rej Amount']
+                flagged_show.columns = ['Provider', 'Total Claims', 'Rej Rate %', 'Rej Amount']
                 st.dataframe(flagged_show,  width="stretch", hide_index=True)
             else:
                 st.success('No providers flagged this month.')
@@ -717,10 +791,11 @@ with tab4:
         if fig:
             st.plotly_chart(fig,  width="stretch")
 
-        st.markdown(
-            '<div class="section-header">Investigation Queue (prioritized)</div>',
-            unsafe_allow_html=True,
-        )
+        st.markdown("""
+            <span title="Ranks providers by investigation priority based on rejection rate, financial impact, and recurring rejection patterns such as MNEC and NCOV. Providers with the highest overall risk are listed first.">
+                <div class="section-header">Investigation Queue (Prioritized) ⓘ</div>
+            </span>
+            """, unsafe_allow_html=True)
         if not provider_investigation.empty:
             queue_cols = [
                 c for c in [
@@ -736,37 +811,60 @@ with tab4:
         else:
             st.info('Not enough provider data for investigation queue.')
 
-        st.markdown('<div class="section-header">Provider Drill-Down</div>', unsafe_allow_html=True)
+        # st.markdown('<div class="section-header">Provider Drill-Down</div>', unsafe_allow_html=True)
+        st.markdown("""
+            <span title="View detailed claim information for a selected provider, including the most common rejection codes, rejected drugs, and high-risk drug-diagnosis combinations.">
+                <div class="section-header">Provider Drill-Down ⓘ</div>
+            </span>
+            """, unsafe_allow_html=True)
+        
         provider_options = sorted(drug_df['DOC_LIC_NO'].dropna().unique().tolist())
-        default_provider = (
-            provider_investigation.iloc[0]['DOC_LIC_NO']
-            if not provider_investigation.empty
-            else provider_options[0]
-        )
-        selected_provider = st.selectbox(
-            'Select provider',
-            provider_options,
-            index=provider_options.index(default_provider) if default_provider in provider_options else 0,
-        )
-        detail = compute_provider_detail(drug_df, selected_provider)
-        if detail:
-            title = detail['doc_name'] or selected_provider
-            st.markdown(
-                f"**{title}** (`{selected_provider}`) — "
-                f"{detail['total_claims']:,} claims | "
-                f"{detail['rej_rate']}% rejection | "
-                f"{detail['rej_amt']:,.0f} rejected amount"
+
+        if not provider_options:
+            st.info('No provider data available for this selection.')
+        else:
+            default_provider = (
+                provider_investigation.iloc[0]['DOC_LIC_NO']
+                if not provider_investigation.empty
+                else provider_options[0]
             )
-            d1, d2, d3 = st.columns(3)
-            with d1:
-                st.markdown("**Top rejection codes**")
-                st.dataframe(detail['top_codes'],  width="stretch", hide_index=True)
-            with d2:
-                st.markdown("**Top rejected drugs**")
-                st.dataframe(detail['top_drugs'],  width="stretch", hide_index=True)
-            with d3:
-                st.markdown("**Top rejected combos**")
-                st.dataframe(detail['top_combos'],  width="stretch", hide_index=True)
+            selected_provider = st.selectbox(
+                'Select provider',
+                provider_options,
+                index=provider_options.index(default_provider) if default_provider in provider_options else 0,
+            )
+            detail = compute_provider_detail(drug_df, selected_provider)
+            if detail:
+                title = detail['doc_name'] or selected_provider
+                st.markdown(
+                    f"**{title}** (`{selected_provider}`) — "
+                    f"{detail['total_claims']:,} claims | "
+                    f"{detail['rej_rate']}% rejection | "
+                    f"{detail['rej_amt']:,.0f} rejected amount"
+                )
+                d1, d2, d3 = st.columns(3)
+                with d1:
+                    st.markdown("""
+                        <span title="Shows the rejection codes that occur most frequently for the selected provider, helping identify the main reasons for claim rejections.">
+                            <b>Top Rejection Codes ⓘ</b>
+                        </span>
+                        """, unsafe_allow_html=True)
+                    st.dataframe(detail['top_codes'],  width="stretch", hide_index=True)
+                with d2:
+                    st.markdown("""
+                        <span title="Shows the drugs with the highest number of rejected claims and rejected amounts for the selected provider.">
+                            <b>Top Rejected Drugs ⓘ</b>
+                        </span>
+                        """, unsafe_allow_html=True)
+                    st.dataframe(detail['top_drugs'],  width="stretch", hide_index=True)
+                with d3:
+                    # st.markdown("**Top rejected combos**")
+                    st.markdown("""
+                        <span title="Shows the Drug-Diagnosis combinations that are most frequently rejected for the selected provider, helping identify recurring treatment patterns.">
+                            <b>Top Rejected Combinations ⓘ</b>
+                        </span>
+                        """, unsafe_allow_html=True)
+                    st.dataframe(detail['top_combos'],  width="stretch", hide_index=True)
     else:
         st.warning('DOC_LIC_NO column not found in dataset.')
 
@@ -862,22 +960,41 @@ with tab5:
     if not fraud_critical.empty:
         
         # Section 1: Critical Patterns (Prioritized Queue)
-        st.markdown(
-            '<div class="section-header">🎯 Critical & Warning Findings (Ranked by Severity)</div>',
-            unsafe_allow_html=True
-        )
-        
+        st.markdown("""
+        <span title="Highlights providers, drugs, diagnoses, and rejection patterns that have changed significantly compared with previous months. Findings are ranked by severity to help prioritize investigation.">
+            <div class="section-header">🎯 Critical & Warning Findings (Ranked by Severity) ⓘ</div>
+        </span>
+        """, unsafe_allow_html=True)
+
         display_cols = [
-            'Rank', 'Dimension', 'Entity', 'Metric', 'Current', 'Baseline_Mean',
-            # 'Pct_Change', 'ZScore',
-              'Anomaly_Score', 'Severity', 'Reason'
-        ]
+        'Rank', 'Dimension', 'Entity', 'Metric', 'Current',
+        'Baseline_Mean', #'Anomaly_Score', 
+        'Severity', 'Reason'
+    ]
         
+        display_df = fraud_critical[display_cols].copy()
+
+        display_df.columns = [
+            "Rank",
+            "Category",
+            "Provider / Drug / Diagnosis",
+            "Metric",
+            "Current Value",
+            "Historical Average",
+            # "Risk Score",
+            "Severity",
+            "Why Flagged"
+        ]
+
         st.dataframe(
-            fraud_critical[display_cols].head(25),
-            width = "stretch",
-            hide_index=True
-        )
+                display_df,
+                hide_index=True,
+                width="stretch",
+                height=500
+            )
+
+       
+
         st.caption("Need to dig into one specific finding — trend over time, full metrics? See the Emerging Patterns tab.")
         
         st.markdown("<br>", unsafe_allow_html=True)
@@ -932,12 +1049,21 @@ with tab5:
         # Section 3: New Patterns & Volume Spikes
         # col_c, col_d = st.columns(2)
         
-        # ── NEW DIAGNOSIS SPIKES (COVID-style) ──────────────────────── replaced
         # ── NEW ENTITIES APPEARING ────────────────────────────────────
         # with col_c:
+        st.markdown("""
+        <span title="
+        Identifies drugs, diagnoses, providers, and drug-diagnosis combinations that appear for the first time compared with previously uploaded months.
+        New entities may represent newly introduced treatments, new providers, changes in patient conditions, or data quality issues.
+        Reviewing them helps detect emerging trends and unexpected changes in claim activity.
+        ">
+            <b>🆕 New Entities Appearing ⓘ</b>
+        </span>
+        """, unsafe_allow_html=True)
 
-        st.markdown( '<div class="section-header">🆕 New Entities Appearing</div>',unsafe_allow_html=True)
-        st.caption('New drugs, diagnoses, providers and drug-diagnosis combinations ' 'never seen in prior uploaded months.')
+        st.caption(
+            "Identifies new drugs, diagnoses, providers, and drug-diagnosis combinations that were not present in earlier uploaded months."
+        )
         total_new = sum(len(v) for v in new_entities.values())
         if total_new > 0:
             st.success(f"{total_new:,} new entities detected")
@@ -960,6 +1086,7 @@ with tab5:
 
         if new_entities:
             with st.expander("🆕 New Drugs"):
+                
                 if 'drugs' in new_entities:
                     st.dataframe(new_entities['drugs'].head(20),width="stretch",hide_index=True)
 
@@ -1009,6 +1136,11 @@ with tab5:
 
         with doc_col:
             st.markdown("**Documentation Issues**")
+            st.markdown("""
+            <span title="The claim was rejected because the required supporting documents were missing, incomplete, or did not meet the insurer's documentation requirements.">
+                <b>📄 Documentation Issues ⓘ</b>
+            </span>
+            """, unsafe_allow_html=True)
             doc_matched, doc_summary = compute_rejection_reason_hotspots(
                 drug_df, REJECTION_REASON_KEYWORDS['Documentation']
             )
@@ -1026,6 +1158,11 @@ with tab5:
 
         with mn_col:
             st.markdown("**Medical Necessity**")
+            st.markdown("""
+            <span title="The claim was rejected because the insurance company determined that the prescribed treatment, test, or medication was not medically necessary based on the patient's condition or clinical guidelines.">
+                <b>⚕️ Medical Necessity ⓘ</b>
+            </span>
+            """, unsafe_allow_html=True)
             mn_matched, mn_summary = compute_rejection_reason_hotspots(
                 drug_df, REJECTION_REASON_KEYWORDS['Medical Necessity']
             )
@@ -1051,7 +1188,16 @@ with tab5:
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── NEW DRUGS WITH 100% NOT-COVERED REJECTION ───────────────────────
-    st.markdown('<div class="section-header">💊 New Drugs with 100% Not-Covered Rejection</div>', unsafe_allow_html=True)
+    st.markdown("""
+                <span title="
+                Lists drugs with 100% NCOV (Not Covered) rejections in the selected month.
+                'Ever Approved' means the same drug and diagnosis combination was approved previously, 
+                suggesting a possible policy change or coding issue.
+                ">
+                    <b>💊 New Drugs with 100% Not-Covered Rejection ⓘ</b>
+                </span>
+                """, unsafe_allow_html=True)
+
     st.caption('Drugs 100% rejected as NCOV this month. "Ever Approved" flags ones that WERE approved before '
                'for the same diagnosis — a formulary drop or coding bug, not a genuinely new/never-covered drug.')
 
@@ -1086,7 +1232,17 @@ with tab5:
 
 
     # ── COVERAGE FLIPS — REJECTED IN ONE MONTH, APPROVED IN ANOTHER ────
-    st.markdown('<div class="section-header">🔄 Coverage Flips — Rejected in One Month, Approved in Another</div>', unsafe_allow_html=True)
+    # st.markdown('<div class="section-header">🔄 Coverage Flips — Rejected in One Month, Approved in Another</div>', unsafe_allow_html=True)
+    st.markdown("""
+        <span title="
+        Identifies drugs that were rejected as 'Not Covered (NCOV)' in one month but approved in a different month.
+        This indicates a change in coverage status over time, which may result from formulary updates, policy changes, or claim processing corrections.
+        These drugs should be reviewed to understand why coverage changed.
+        ">
+            <b>🔄 Coverage Flips — Rejected in One Month, Approved in Another ⓘ</b>
+        </span>
+        """, unsafe_allow_html=True)
+   
     st.caption(
         'Drugs that had at least one month with NCOV rejections and at least one DIFFERENT '
         'month with approvals — a clean before/after coverage change, not a gradual drift.'
@@ -1127,25 +1283,41 @@ with tab5:
 
 
     # ── PAYMENT INTEGRITY (Keep existing section) ──────────────────────
-    st.markdown('<div class="section-header">💵 Payment Integrity Anomalies</div>', unsafe_allow_html=True)
+    st.markdown("""
+        <span title="
+        Identifies payment-related anomalies that may indicate claim processing errors or data quality issues.
+        Examples include rejected claims that were still paid, payments exceeding the requested amount, and claims paid despite having a requested amount of $0.
+        These records should be reviewed to ensure payment accuracy and financial integrity.
+        ">
+            <b>💵 Payment Integrity Anomalies ⓘ</b>
+        </span>
+        """, unsafe_allow_html=True)
+
     st.caption('Financial data-integrity issues (rejected-but-paid, overpayments, etc.)')
 
     pa1, pa2, pa3 = st.columns(3)
     with pa1:
         st.markdown(f"""<div class="metric-card red">
-            <div class="metric-label">Rejected But Paid</div>
+             <div class="metric-label" title="Claims where an approved payment exists even though the claim was rejected. These should normally have $0 approved amount.">
+    Rejected But Paid ⓘ
+</div>       
+
             <div class="metric-value">{payment_anomaly_summary['rejected_paid_count']:,}</div>
             <div class="metric-sub">{payment_anomaly_summary['rejected_paid_amt']:,.0f} paid on rejected claims</div>
         </div>""", unsafe_allow_html=True)
     with pa2:
         st.markdown(f"""<div class="metric-card amber">
-            <div class="metric-label">Overpaid (Real Request)</div>
+            <div class="metric-label" title="Claims where the approved payment exceeds the originally requested amount, indicating a potential overpayment.">
+    Overpaid (Real Request) ⓘ
+</div>
             <div class="metric-value">{payment_anomaly_summary['genuine_overpayment_count']:,}</div>
             <div class="metric-sub">{payment_anomaly_summary['genuine_overpayment_amt']:,.0f} excess paid</div>
         </div>""", unsafe_allow_html=True)
     with pa3:
         st.markdown(f"""<div class="metric-card blue">
-            <div class="metric-label">Paid With $0 Requested</div>
+            <div class="metric-label" title="Claims that received payment even though the requested amount was $0. This usually indicates missing or incorrect source data.">
+                Paid With $0 Requested ⓘ
+            </div>
             <div class="metric-value">{payment_anomaly_summary['zero_requested_count']:,}</div>
             <div class="metric-sub">{payment_anomaly_summary['zero_requested_amt']:,.0f} — likely missing source value</div>
         </div>""", unsafe_allow_html=True)
